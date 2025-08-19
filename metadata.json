@@ -2,7 +2,7 @@
   "requestFramePermissions": [
     "microphone"
   ],
-  "name": "AI Career Consulting Support_プロトタイプ3",
+  "name": "Copy of AI Career Consulting Support_プロトタイプXX",
   "description": "AIとのキャリア相談を始める前に、マイクの使用許可をお願いしています。音声で簡単に入力できるようになり、よりスムーズにご相談いただけます。ご協力ありがとうございます！",
   "prompt": ""
 }

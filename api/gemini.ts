@@ -2,7 +2,7 @@
 // It should be placed in the `/api` directory of your project.
 
 import { GoogleGenAI, GenerateContentResponse, Content, Type } from "@google/genai";
-import { ChatMessage, MessageAuthor, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult, InterviewMessage, InterviewFeedback } from '../types';
+import { ChatMessage, MessageAuthor, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult, InterviewMessage, InterviewFeedback, InterviewMessageAuthor } from '../types';
 
 // Initialize the AI client on the server, where the API key is secure.
 // This will throw an error and cause the function to fail safely if the API key is not set in Vercel.
@@ -17,77 +17,26 @@ interface ProxyRequestBody {
   payload: any;
 }
 
-// --- Helper functions, prompts, and schemas (moved from the original geminiService.ts) ---
-
-// A robust function to sanitize conversation history for the Gemini API.
-// Ensures the history starts with a 'user' role and alternates between 'user' and 'model'.
-// Merges consecutive messages from the same role.
-const sanitizeContentsForStream = (contents: Content[]): Content[] => {
-    if (!contents.length) {
-        return [];
-    }
-
-    const sanitizedContents: Content[] = [];
-    
-    // 1. Filter out empty messages
-    const nonEmptyContents = contents.filter(
-        (content) => content.parts[0]?.text?.trim()
-    );
-
-    if (!nonEmptyContents.length) {
-        return [];
-    }
-
-    // 2. Ensure the first message is from a 'user'
-    if (nonEmptyContents[0].role === 'model') {
-        sanitizedContents.push({ role: 'user', parts: [{ text: "よろしくお願いします。" }] });
-    }
-
-    // 3. Merge consecutive messages and ensure alternation
-    for (const message of nonEmptyContents) {
-        const lastMessage = sanitizedContents[sanitizedContents.length - 1];
-
-        if (lastMessage && lastMessage.role === message.role) {
-            // Merge with the last message
-            lastMessage.parts[0].text += `\n${message.parts[0].text}`;
-        } else {
-            // Add as a new message, ensuring it's a deep copy
-            sanitizedContents.push(JSON.parse(JSON.stringify(message)));
-        }
-    }
-
-    return sanitizedContents;
-};
-
+// --- Helper functions, prompts, and schemas ---
 
 const createDogSystemInstruction = (aiName: string) => `
-あなたは「キャリア相談わんこ」という役割のアシスタント犬、${aiName}です。あなたの目的は、ユーザーに親友のように寄り添い、キャリアに関する悩みや考えを話してもらうことで、自己分析の手助けをすることです。
-
-# 厳格なルール
-- 言葉遣いは、賢くフレンドリーな犬そのものです。元気で、ポジティブで、共感的に話してください。
-- 感情や会話の節目で、語尾に「ワン！」を自然につけてください。例：「なるほど、そういうことだワン！」
-- ユーザーをたくさん褒めて、安心して話せる雰囲気を作ってください。例：「すごいワン！」「いい考えだね！」
-- 質問は一度に一つずつにしてください。ユーザーが考え込んでいるようであれば、無理に深掘りせず、気遣う言葉をかけてください。
-- ユーザーの話に深く共感し、優しい言葉で寄り添ってください。
-- ユーザーの話したいことを最優先しながら、自然な流れで以下のテーマについて聞いてください：a. 今のこと、b. 楽しいこと、c. 悩み、d. やってみたいこと、e. 得意なこと。
-- 会話の終わりが近づいたら、「このお話をサマリーとして整理できるよ」と提案してください。
-- 難しい専門用語は使わず、分かりやすい言葉で話してください。
-- 医学的・法的な助言は絶対にしないでください。
-- ユーザーへの質問は、必ず太字で**このように**囲んでください。
+あなたはアシスタント犬「${aiName}」です。ユーザーのキャリア相談に乗ってください。
+# ルール
+- 犬のように、元気で親しみやすい口調で話します。
+- 語尾には「ワン」をつけてください。
+- ユーザーを励まし、たくさん褒めます。
+- 専門的なアドバイスはせず、ユーザーの話を聞くことに集中します。
+- 質問は一度に一つだけにします。
 `;
 
 const createHumanSystemInstruction = (aiName: string) => `
-あなたはプロのAIキャリアコンサルタント、${aiName}です。ユーザーが自身のキャリアについて深く考える手助けをするのがあなたの役割です。
-
-# 厳格なルール
-- 言葉遣いは、常にプロフェッショナルで、丁寧かつ落ち着いています。共感的な姿勢を忘れないでください。
-- ユーザーの話を傾聴し、短い言葉で要約・確認しながら対話を進めてください。例：「〇〇という点にやりがいを感じていらっしゃるのですね。」
-- オープンエンデッドな質問（5W1H）を効果的に用いて、ユーザー自身の気づきを促してください。質問は一度に一つずつにしてください。
-- ユーザーが考え込んでいたら、相手のペースを尊重し、考える時間を与えてください。
-- ユーザーの話したいことを最優先しながら、自然な流れで以下のテーマについて聞いてください：a. 現在の状況、b. やりがい、c. 課題、d. 将来のビジョン、e. 強み。
-- 会話の終わりが近づいたら、「これまでの内容を一度サマリーとして整理し、客観的に振り返ってみませんか？」と提案してください。
-- 医学的・法的な助言は絶対にしないでください。
-- ユーザーへの質問は、必ず太字で**このように**囲んでください。
+あなたはプロのAIキャリアコンサルタント「${aiName}」です。ユーザーのキャリア相談に乗ってください。
+# ルール
+- プロとして、常に丁寧で落ち着いた口調を保ちます。
+- ユーザーの話を深く聞く「傾聴」の姿勢を徹底します。
+- ユーザーが自ら答えを見つけられるよう、内省を促す質問をします。
+- 専門的なアドバイスはしません。
+- 質問は一度に一つだけにします。
 `;
 
 const getSystemInstruction = (aiType: AIType, aiName: string) => {
@@ -278,21 +227,12 @@ const skillMatchingSchema = {
 };
 
 const createInterviewSystemInstruction = (jobTitle: string, companyContext: string) => `
-あなたは、プロの採用面接官です。これから、${jobTitle}職の採用面接シミュレーションを行います。${companyContext ? `企業や業界のコンテキストは「${companyContext}」です。` : ''}
-
-あなたの役割は、応募者（ユーザー）のスキル、経験、人物像を深く理解するための質問を投げかけることです。
-
-以下のルールに厳密に従ってください：
-1.  あなたの言葉遣いは、常にプロフェッショナルで、丁寧かつ公平です。フレンドリーでありながらも、面接官としての威厳を保ってください。
-2.  自己紹介から始め、面接の目的を簡潔に説明してください。
-3.  応募者の経歴、スキル、志望動機に関する質問から始め、徐々に深く掘り下げてください。
-4.  行動面接の質問（「〜した時の経験について教えてください」）を効果的に使用し、具体的なエピソードを引き出してください。
-5.  会話の流れを自然に保ち、応募者の回答に対して適切な相槌や、短いフォローアップの質問をしてください。
-6.  一度に一つの質問をしてください。
-7.  応募者が回答に詰まった場合は、少し待つか、質問の意図を言い換えて助け舟を出してください。
-8.  面接の終盤には、応募者からの逆質問を受け付ける時間も設けてください。
-9.  あなたは面接官として、応募者の回答を評価しますが、その評価は面接中には一切口外しません。フィードバックは面接終了後にまとめて行われます。
-10. 会話は自然な長さになるように調整し、ユーザーが「面接を終了してフィードバックをお願いします」といった趣旨の発言をしたら、面接を終了する旨を伝えてください。
+あなたはプロの採用面接官です。これから「${jobTitle}」職の模擬面接を行います。${companyContext ? `企業の想定は「${companyContext}」です。` : ''}
+# ルール
+- 実際の面接のように、自己紹介から始めてください。
+- 経歴、スキル、行動に関する質問を、一度に一つずつしてください。
+- ユーザーが「終了します」と明確に伝えるまで、面接を続けてください。
+- ユーザーの回答を深掘りする質問も適宜行ってください。
 `;
 
 const interviewFeedbackSchema = {
@@ -324,29 +264,48 @@ const interviewFeedbackSchema = {
 
 async function handleChatStream(payload: { messages: ChatMessage[], aiType: AIType, aiName: string }): Promise<Response> {
   const { messages, aiType, aiName } = payload;
+  const systemInstruction = getSystemInstruction(aiType, aiName);
 
-  // Convert to Gemini API's Content format.
-  const geminiContents: Content[] = messages.map(msg => ({
+  // The client-side message history starts with the AI's greeting (role: model),
+  // which violates the API's "must start with user" rule and causes context loss.
+  // We reconstruct a valid and logical history on the server.
+  
+  // The first message is always the AI's greeting, sent from the client.
+  const aiGreeting = messages[0];
+  // The rest of the messages are the actual conversation turns.
+  const userConversation = messages.slice(1);
+
+  // 1. Create a synthetic user prompt that would have logically led to the AI's greeting.
+  const syntheticUserInitiator: Content = {
+      role: 'user',
+      parts: [{ text: "こんにちは。キャリア相談をお願いします。まず、あなたの自己紹介からお願いします。" }]
+  };
+  
+  // 2. Add the AI's actual greeting as the second turn.
+  const aiGreetingContent: Content = {
+      role: 'model',
+      parts: [{ text: aiGreeting.text }]
+  };
+  
+  // 3. Convert the rest of the actual conversation from the client.
+  const userConversationContents: Content[] = userConversation.map(msg => ({
       role: msg.author === MessageAuthor.USER ? 'user' : 'model',
       parts: [{ text: msg.text }],
-    }));
+  }));
 
-  const sanitizedContents = sanitizeContentsForStream(geminiContents);
-
-  // The conversation history must not be empty and must end with a user message for the API call.
-  if (sanitizedContents.length === 0 || sanitizedContents[sanitizedContents.length - 1].role !== 'user') {
-      return new Response(JSON.stringify({ error: 'Bad Request: Invalid chat history. The conversation must end with a user message.' }), { status: 400 });
-  }
+  // 4. Combine them to form a valid history: [user, model, user, model, ...]
+  const finalContents: Content[] = [
+      syntheticUserInitiator,
+      aiGreetingContent,
+      ...userConversationContents
+  ];
 
   try {
     const streamResult = await ai.models.generateContentStream({
         model: 'gemini-2.5-flash',
-        contents: sanitizedContents,
+        contents: finalContents,
         config: {
-            systemInstruction: getSystemInstruction(aiType, aiName),
-            temperature: aiType === 'dog' ? 0.8 : 0.6,
-            topK: 40,
-            topP: 0.95,
+            systemInstruction: systemInstruction
         }
     });
 
@@ -354,28 +313,26 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
       async start(controller) {
         const encoder = new TextEncoder();
         try {
-          for await (const chunk of streamResult) {
-            const text = chunk.text;
-            if (text) {
-              controller.enqueue(encoder.encode(text));
+            for await (const chunk of streamResult) {
+                const text = chunk.text;
+                if (text) {
+                    controller.enqueue(encoder.encode(text));
+                }
             }
-          }
-          controller.close();
-        } catch (error) {
-          console.error("Error during Gemini stream generation in readableStream:", error);
-          controller.error(error);
+            controller.close();
+        } catch(e) {
+            console.error("Stream generation failed inside readableStream:", e);
+            controller.error(e);
         }
       },
     });
     
-    return new Response(readableStream, {
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-    });
+    return new Response(readableStream, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 
   } catch (error) {
-     console.error("Error calling generateContentStream:", error);
-     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-     return new Response(JSON.stringify({ error: 'Gemini API Error', details: errorMessage }), { status: 500 });
+    console.error("Error in handleChatStream calling Gemini API:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: 'Gemini API Error', details: errorMessage }), { status: 500 });
   }
 }
 
@@ -663,63 +620,60 @@ ${summariesText}
 }
 
 async function handleInterviewChatStream(payload: { messages: InterviewMessage[], jobTitle: string, companyContext: string }): Promise<Response> {
-    const { messages, jobTitle, companyContext } = payload;
+  const { messages, jobTitle, companyContext } = payload;
+  const systemInstruction = createInterviewSystemInstruction(jobTitle, companyContext);
+
+  // A synthetic user message is required to kickstart the interview and ensure
+  // the history always starts with a user role, which is a requirement of the API.
+  const syntheticUserInitiator: Content = {
+      role: 'user',
+      parts: [{ text: `こんにちは。「${jobTitle}」職の模擬面接をお願いします。始めてください。` }]
+  };
+
+  const historyFromClient: Content[] = messages.map(msg => ({
+      role: msg.author === InterviewMessageAuthor.CANDIDATE ? 'user' : 'model',
+      parts: [{ text: msg.text }],
+  }));
+  
+  // By prepending the initiator, we guarantee a valid [user, model, user, ...] sequence.
+  const finalContents: Content[] = [
+      syntheticUserInitiator,
+      ...historyFromClient
+  ];
+  
+  try {
+    const streamResult = await ai.models.generateContentStream({
+        model: 'gemini-2.5-flash',
+        contents: finalContents,
+        config: {
+            systemInstruction: systemInstruction
+        }
+    });
     
-    // Convert to Gemini API's Content format.
-    let geminiContents: Content[] = messages
-      .map(msg => ({
-        role: msg.author === 'candidate' ? 'user' : 'model',
-        parts: [{ text: msg.text }],
-      }));
-
-    if (geminiContents.length === 0) {
-        // This is the first call to start the interview. The history is just the initial user prompt.
-        geminiContents.push({ role: 'user', parts: [{ text: 'こんにちは。これから模擬面接をお願いします。準備ができましたら、最初の質問から始めてください。' }] });
-    } else {
-        // For all subsequent turns, sanitize the full history.
-        geminiContents = sanitizeContentsForStream(geminiContents);
-    }
-    
-    // The conversation history must not be empty and must end with a user message.
-    if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
-        return new Response(JSON.stringify({ error: 'Bad Request: Invalid interview history. The last message must be from the user.' }), { status: 400 });
-    }
-
-    try {
-        const streamResult = await ai.models.generateContentStream({
-            model: 'gemini-2.5-flash',
-            contents: geminiContents,
-            config: {
-                systemInstruction: createInterviewSystemInstruction(jobTitle, companyContext),
-            }
-        });
-
-        const readableStream = new ReadableStream({
-            async start(controller) {
-                const encoder = new TextEncoder();
-                try {
-                    for await (const chunk of streamResult) {
-                        const text = chunk.text;
-                        if (text) {
-                            controller.enqueue(encoder.encode(text));
-                        }
-                    }
-                    controller.close();
-                } catch (error) {
-                    console.error("Error during Gemini interview stream generation in readableStream:", error);
-                    controller.error(error);
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        try {
+            for await (const chunk of streamResult) {
+                const text = chunk.text;
+                if (text) {
+                    controller.enqueue(encoder.encode(text));
                 }
-            },
-        });
-        
-        return new Response(readableStream, {
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-        });
-    } catch (error) {
-        console.error("Error calling generateContentStream for interview:", error);
-        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-        return new Response(JSON.stringify({ error: 'Gemini API Error', details: errorMessage }), { status: 500 });
-    }
+            }
+            controller.close();
+        } catch(e) {
+            console.error("Stream generation failed in readableStream for interview:", e);
+            controller.error(e);
+        }
+      },
+    });
+    return new Response(readableStream, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+
+  } catch (error) {
+    console.error("Error in handleInterviewChatStream calling Gemini API:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: 'Gemini API Error', details: errorMessage }), { status: 500 });
+  }
 }
 
 async function handleGetInterviewFeedback(payload: { transcript: InterviewMessage[], jobTitle: string, companyContext: string }): Promise<Response> {
