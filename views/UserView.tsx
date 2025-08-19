@@ -1,4 +1,7 @@
 
+
+
+
 import React, { useState, useCallback, useEffect } from 'react';
 import { ChatMessage, MessageAuthor, StoredConversation, StoredData, STORAGE_VERSION, AIType } from '../types';
 import { getStreamingChatResponse, generateSummary, reviseSummary } from '../services/geminiService';
@@ -83,8 +86,9 @@ const UserView: React.FC = () => {
   }, []);
 
   const handleAvatarSelected = useCallback((selection: { type: AIType, avatarKey: string }) => {
-    const { type, avatarKey } = selection;
     setIsLoading(true);
+    
+    const { type, avatarKey } = selection;
     setAiType(type);
     setAiAvatarKey(avatarKey);
 
@@ -147,8 +151,14 @@ const UserView: React.FC = () => {
     setMessages(currentMessages);
     setIsLoading(true);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      console.warn("Request timed out after 30 seconds. Aborting.");
+      controller.abort();
+    }, 30000); // 30-second timeout
+
     try {
-      const stream = await getStreamingChatResponse(currentMessages, aiType, aiName);
+      const stream = await getStreamingChatResponse(currentMessages, aiType, aiName, controller.signal);
       if (!stream) {
           throw new Error("ストリームの取得に失敗しました。");
       }
@@ -177,12 +187,34 @@ const UserView: React.FC = () => {
 
     } catch (error) {
       console.error("Error sending message:", error);
+      let detailMessage = "サーバーとの通信に失敗しました。";
+      if (error instanceof Error) {
+        if (error.name === 'AbortError') {
+          detailMessage = "サーバーからの応答がタイムアウトしました。しばらくしてから再度お試しください。";
+        } else if (error.message.includes("502") || error.message.includes("504")) {
+            detailMessage = "サーバーが応答しませんでした。時間をおいて再度お試しください。(タイムアウトの可能性があります)";
+        } else if (error.message.includes("400")) {
+            detailMessage = "リクエストが正しくありません。";
+        } else {
+            detailMessage = error.message;
+        }
+      }
+
       const errorMessage: ChatMessage = {
         author: MessageAuthor.AI,
-        text: "申し訳ありません、エラーが発生しました。もう一度お試しください。"
+        text: `申し訳ありません、エラーが発生しました。\n\n---\n*技術的な詳細: ${detailMessage}*`
       };
-      setMessages(prev => [...prev, errorMessage]);
+      
+      setMessages(prev => {
+          const lastMessage = prev[prev.length - 1];
+          if(lastMessage && lastMessage.author === MessageAuthor.AI && lastMessage.text === '') {
+              return [...prev.slice(0, -1), errorMessage];
+          }
+          return [...prev, errorMessage];
+      });
+
     } finally {
+      clearTimeout(timeoutId);
       setIsLoading(false);
     }
   };

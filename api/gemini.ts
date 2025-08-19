@@ -1,4 +1,5 @@
 
+
 // This file is intended to be deployed as a Vercel Serverless Function.
 // It should be placed in the `/api` directory of your project.
 
@@ -264,10 +265,12 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
   }
 
   // Gemini APIが要求する形式に会話履歴を変換
-  const geminiHistory = historyMessages.map(msg => ({
+  const geminiHistory = historyMessages
+    .filter(msg => msg.text && msg.text.trim() !== '') // 空のメッセージを除外
+    .map(msg => ({
       role: msg.author === MessageAuthor.USER ? 'user' : 'model',
       parts: [{ text: msg.text }],
-  }));
+    }));
 
   const chat: Chat = ai.chats.create({
     model: 'gemini-2.5-flash',
@@ -285,13 +288,19 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
   const readableStream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
-      for await (const chunk of streamResult) {
-        const text = chunk.text;
-        if (text) {
-          controller.enqueue(encoder.encode(text));
+      try {
+        for await (const chunk of streamResult) {
+          const text = chunk.text;
+          if (text) {
+            controller.enqueue(encoder.encode(text));
+          }
         }
+        controller.close();
+      } catch (error) {
+        console.error("Error during Gemini stream generation:", error);
+        // Propagate the error to the stream consumer (the frontend)
+        controller.error(error);
       }
-      controller.close();
     },
   });
   

@@ -12,7 +12,7 @@ const handleApiResponse = async (response: Response) => {
 
 // --- API Functions ---
 
-export const getStreamingChatResponse = async (messages: ChatMessage[], aiType: AIType, aiName: string): Promise<ReadableStream<Uint8Array> | null> => {
+export const getStreamingChatResponse = async (messages: ChatMessage[], aiType: AIType, aiName: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array> | null> => {
     try {
         const response = await fetch(API_ENDPOINT, {
             method: 'POST',
@@ -21,11 +21,15 @@ export const getStreamingChatResponse = async (messages: ChatMessage[], aiType: 
                 action: 'chat',
                 payload: { messages, aiType, aiName }
             }),
+            signal, // Pass the AbortSignal to the fetch request
         });
         const checkedResponse = await handleApiResponse(response);
         return checkedResponse.body;
     } catch (error) {
         console.error("Streaming chat API error:", error);
+        if (error instanceof Error && error.name === 'AbortError') {
+            throw error; // Re-throw AbortError to be handled by the caller
+        }
         throw new Error(`Gemini APIとの通信に失敗しました: ${error instanceof Error ? error.message : String(error)}`);
     }
 };
