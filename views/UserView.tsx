@@ -1,9 +1,5 @@
-
-
-
-
 import React, { useState, useCallback, useEffect } from 'react';
-import { ChatMessage, MessageAuthor, StoredConversation, StoredData, STORAGE_VERSION, AIType } from '../types';
+import { ChatMessage, MessageAuthor, StoredConversation, StoredData, STORAGE_VERSION, AIType, InterviewSession } from '../types';
 import { getStreamingChatResponse, generateSummary, reviseSummary } from '../services/geminiService';
 import Header from '../components/Header';
 import ChatWindow from '../components/ChatWindow';
@@ -12,6 +8,7 @@ import SummaryModal from '../components/SummaryModal';
 import AIAvatar from '../components/AIAvatar';
 import AvatarSelectionView from './AvatarSelectionView';
 import UserDashboard from '../components/UserDashboard';
+import InterviewView from './InterviewView';
 
 const nameMap = {
   human_female_1: ['佐藤 さくら', '高橋 あかり', '鈴木 陽菜'],
@@ -33,12 +30,13 @@ const getUserId = (): string => {
     return userId;
 };
 
-type UserViewMode = 'loading' | 'dashboard' | 'avatarSelection' | 'chatting';
+type UserViewMode = 'loading' | 'dashboard' | 'avatarSelection' | 'chatting' | 'interview';
 
 const UserView: React.FC = () => {
   const [view, setView] = useState<UserViewMode>('loading');
   const [userId] = useState<string>(getUserId());
   const [userConversations, setUserConversations] = useState<StoredConversation[]>([]);
+  const [userInterviews, setUserInterviews] = useState<InterviewSession[]>([]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -55,34 +53,44 @@ const UserView: React.FC = () => {
   useEffect(() => {
     const allDataRaw = localStorage.getItem('careerConsultations');
     let convs: StoredConversation[] = [];
+    let intervs: InterviewSession[] = [];
+    
     if (allDataRaw) {
         try {
             const parsed = JSON.parse(allDataRaw);
-            let allConversations: StoredConversation[] = [];
+            let allData: StoredData = { version: STORAGE_VERSION, data: [], interviews: [] };
 
             // Handle new versioned format
-            if (parsed && parsed.data && Array.isArray(parsed.data)) {
-                allConversations = parsed.data;
+            if (parsed && parsed.version && parsed.data) {
+                allData = parsed as StoredData;
             } 
             // Handle old array format for backward compatibility
             else if (Array.isArray(parsed)) {
-                allConversations = parsed;
+                allData = { version: 1, data: parsed, interviews: [] };
             }
             
-            if (allConversations.length > 0) {
-                 convs = allConversations.filter(c => c.userId === userId);
+            if (allData.data && Array.isArray(allData.data)) {
+                 convs = allData.data.filter(c => c.userId === userId);
+            }
+            if (allData.interviews && Array.isArray(allData.interviews)) {
+                 intervs = allData.interviews.filter(i => i.userId === userId);
             }
         } catch(e) {
-            console.error("Failed to parse conversations from localStorage in UserView", e);
+            console.error("Failed to parse data from localStorage in UserView", e);
         }
     }
     setUserConversations(convs);
-    setView(convs.length > 0 ? 'dashboard' : 'avatarSelection');
+    setUserInterviews(intervs);
+    setView(convs.length > 0 || intervs.length > 0 ? 'dashboard' : 'avatarSelection');
   }, [userId]);
 
 
   const handleNewChat = useCallback(() => {
     setView('avatarSelection');
+  }, []);
+  
+  const handleNewInterview = useCallback(() => {
+    setView('interview');
   }, []);
 
   const handleAvatarSelected = useCallback((selection: { type: AIType, avatarKey: string }) => {
@@ -99,7 +107,7 @@ const UserView: React.FC = () => {
     if (type === 'human') {
         initialMessage = `こんにちは。AIキャリアコンサルタントの${randomName}です。本日はどのようなご相談でしょうか？あなたのキャリアについて、じっくりお話を伺わせてください。`;
     } else { // dog
-        initialMessage = `こんにちは、ワン！ ボクはキャリア相談が得意なアシスタント犬の${randomName}です。あなたのキャリアについて、一緒にお話ししよう！まず、あなたのことを少し教えてくれる？`;
+        initialMessage = `こんにちは、ワン！ ボクはキャリア相談が得意なアシスタント犬の${randomName}です。あなたのキャリアについて、一緒にお話ししよう！まず、あなたのことを少し教えてもらえるかな？`;
     }
     
     setAiName(randomName);
@@ -263,18 +271,19 @@ const UserView: React.FC = () => {
       
       try {
         const storedDataRaw = localStorage.getItem('careerConsultations');
-        let currentAllConversations: StoredConversation[] = [];
+        let currentData: StoredData = { version: STORAGE_VERSION, data: [], interviews: [] };
         if (storedDataRaw) {
-            const parsed = JSON.parse(storedDataRaw);
-            if (parsed.data && Array.isArray(parsed.data)) {
-                currentAllConversations = parsed.data;
-            } else if (Array.isArray(parsed)) {
-                currentAllConversations = parsed; // handle old format
-            }
+             const parsed = JSON.parse(storedDataRaw);
+             if (parsed.version) {
+                 currentData = parsed;
+             } else if (Array.isArray(parsed)) {
+                 currentData.data = parsed;
+             }
         }
 
-        const updatedAllConversations = [...currentAllConversations, newConversation];
+        const updatedAllConversations = [...currentData.data, newConversation];
         const dataToStore: StoredData = {
+          ...currentData,
           version: STORAGE_VERSION,
           data: updatedAllConversations,
         };
@@ -296,6 +305,37 @@ const UserView: React.FC = () => {
     }
     setView('dashboard');
   };
+  
+  const handleFinishInterview = (newInterviewSession?: InterviewSession) => {
+    if (newInterviewSession) {
+        setUserInterviews(prev => [...prev, newInterviewSession]);
+        try {
+            const storedDataRaw = localStorage.getItem('careerConsultations');
+            let currentData: StoredData = { version: STORAGE_VERSION, data: [], interviews: [] };
+            if (storedDataRaw) {
+                const parsed = JSON.parse(storedDataRaw);
+                if (parsed.version) {
+                    currentData = parsed;
+                } else if (Array.isArray(parsed)) {
+                    currentData.data = parsed;
+                }
+            }
+
+            const updatedAllInterviews = [...(currentData.interviews || []), newInterviewSession];
+            const dataToStore: StoredData = {
+                ...currentData,
+                version: STORAGE_VERSION,
+                interviews: updatedAllInterviews
+            };
+            localStorage.setItem('careerConsultations', JSON.stringify(dataToStore));
+            alert('面接履歴が保存されました。');
+        } catch (error) {
+            console.error("Failed to save interview:", error);
+            alert("面接履歴の保存に失敗しました。");
+        }
+    }
+    setView('dashboard');
+  };
 
   const handleCloseSummaryModal = () => {
     setIsSummaryModalOpen(false);
@@ -306,7 +346,12 @@ const UserView: React.FC = () => {
       case 'loading':
           return <div className="text-slate-500">読み込み中...</div>;
       case 'dashboard':
-          return <UserDashboard conversations={userConversations} onNewChat={handleNewChat} />;
+          return <UserDashboard 
+                    conversations={userConversations} 
+                    interviews={userInterviews}
+                    onNewChat={handleNewChat} 
+                    onNewInterview={handleNewInterview}
+                 />;
       case 'avatarSelection':
         return <AvatarSelectionView onSelect={handleAvatarSelected} />;
       case 'chatting':
@@ -331,6 +376,8 @@ const UserView: React.FC = () => {
             </div>
           </div>
         );
+       case 'interview':
+        return <InterviewView userId={userId} onFinish={handleFinishInterview} />;
       default:
         return null;
     }
@@ -343,7 +390,7 @@ const UserView: React.FC = () => {
         <Header 
           isConsultationReady={isConsultationReady}
           onConsultClick={handleGenerateSummary}
-          showBackButton={userConversations.length > 0}
+          showBackButton={userConversations.length > 0 || userInterviews.length > 0}
           onBackClick={handleBackToDashboard}
         />
       )}

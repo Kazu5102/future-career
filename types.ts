@@ -1,8 +1,9 @@
-export const STORAGE_VERSION = 1;
+export const STORAGE_VERSION = 2;
 
 export interface StoredData {
   version: number;
   data: StoredConversation[];
+  interviews?: InterviewSession[];
 }
 
 export enum MessageAuthor {
@@ -86,4 +87,39 @@ export interface SkillMatchingResult {
   recommendedRoles: RecommendedRole[];
   skillsToDevelop: SkillToDevelop[];
   learningResources: LearningResource[];
+}
+
+// Types for Interview Simulator feature
+export enum InterviewMessageAuthor {
+    INTERVIEWER = 'interviewer',
+    CANDIDATE = 'candidate',
+}
+
+export interface InterviewMessage {
+    author: InterviewMessageAuthor;
+    text: string;
+}
+
+export interface QuestionFeedback {
+    question: string;
+    answer: string;
+    analysis: string; // Markdown
+    suggestion: string; // Markdown
+}
+
+export interface InterviewFeedback {
+    overallSummary: string; // Markdown
+    strengthAnalysis: string; // Markdown
+    improvementAnalysis: string; // Markdown
+    questionFeedback: QuestionFeedback[];
+}
+
+export interface InterviewSession {
+    id: number;
+    userId: string;
+    jobTitle: string;
+    companyContext: string;
+    date: string;
+    transcript: InterviewMessage[];
+    feedback: InterviewFeedback | null;
 }

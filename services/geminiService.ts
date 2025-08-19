@@ -1,4 +1,4 @@
-import { ChatMessage, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult } from '../types';
+import { ChatMessage, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult, InterviewMessage, InterviewFeedback } from '../types';
 
 const API_ENDPOINT = '/api/gemini'; // The path to our Vercel serverless function
 
@@ -146,5 +146,46 @@ export const performSkillMatching = async (conversations: StoredConversation[]):
     } catch (error) {
         console.error("Error generating skill matching analysis:", error);
         throw new Error(`スキルマッチングAPIの呼び出しに失敗しました: ${error instanceof Error ? error.message : String(error)}`);
+    }
+};
+
+export const getStreamingInterviewResponse = async (messages: InterviewMessage[], jobTitle: string, companyContext: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array> | null> => {
+    try {
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'interviewChat',
+                payload: { messages, jobTitle, companyContext }
+            }),
+            signal,
+        });
+        const checkedResponse = await handleApiResponse(response);
+        return checkedResponse.body;
+    } catch (error) {
+        console.error("Streaming interview API error:", error);
+        if (error instanceof Error && error.name === 'AbortError') {
+            throw error;
+        }
+        throw new Error(`面接AIとの通信に失敗しました: ${error instanceof Error ? error.message : String(error)}`);
+    }
+};
+
+export const generateInterviewFeedback = async (transcript: InterviewMessage[], jobTitle: string, companyContext: string): Promise<InterviewFeedback> => {
+    try {
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'getInterviewFeedback',
+                payload: { transcript, jobTitle, companyContext }
+            }),
+        });
+        const checkedResponse = await handleApiResponse(response);
+        const data = await checkedResponse.json();
+        return data.feedback;
+    } catch (error) {
+        console.error("Error generating interview feedback:", error);
+        throw new Error(`面接フィードバックの生成に失敗しました: ${error instanceof Error ? error.message : String(error)}`);
     }
 };

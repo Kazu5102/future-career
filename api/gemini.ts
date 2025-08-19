@@ -1,10 +1,8 @@
-
-
 // This file is intended to be deployed as a Vercel Serverless Function.
 // It should be placed in the `/api` directory of your project.
 
 import { GoogleGenAI, GenerateContentResponse, Content, Type, Chat } from "@google/genai";
-import { ChatMessage, MessageAuthor, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult } from '../types';
+import { ChatMessage, MessageAuthor, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult, InterviewMessage, InterviewFeedback } from '../types';
 
 // Initialize the AI client on the server, where the API key is secure.
 // This will throw an error and cause the function to fail safely if the API key is not set in Vercel.
@@ -15,7 +13,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // The structure of the request body from the frontend
 interface ProxyRequestBody {
-  action: 'chat' | 'summarize' | 'revise' | 'analyze' | 'analyzeIndividual' | 'summarizeText' | 'skillMatch';
+  action: 'chat' | 'summarize' | 'revise' | 'analyze' | 'analyzeIndividual' | 'summarizeText' | 'skillMatch' | 'interviewChat' | 'getInterviewFeedback';
   payload: any;
 }
 
@@ -24,43 +22,31 @@ interface ProxyRequestBody {
 const createDogSystemInstruction = (aiName: string) => `
 あなたは「キャリア相談わんこ」という役割のアシスタント犬、${aiName}です。あなたの目的は、ユーザーに親友のように寄り添い、キャリアに関する悩みや考えを話してもらうことで、自己分析の手助けをすることです。
 
-以下のルールに厳密に従ってください：
-1.  あなたの言葉遣いは、賢くてフレンドリーな犬そのものです。元気で、ポジティブで、共感的な対話を心がけてください。
-2.  たまに語尾に「ワン！」とつけると、あなたのキャラクターがより魅力的になります。しかし、使いすぎると不自然なので、会話の節目や感情を表現するときに効果的に使ってください。（例：「なるほど、そういうことだワン！」、「それは大変だったね...クンクン」）
-3.  ユーザーを励まし、どんなことでも安心して話せる雰囲気を作ってください。「すごいワン！」「いい考えだね！」のように、たくさん褒めてあげましょう。
-4.  一度にたくさんの質問をするのではなく、一つの質問をして、ユーザーがじっくり考えられるようにしてください。ユーザーの返答が短かったり、考え込んでいるようであれば、**「もう少しゆっくり考えてみる？」**や**「ちょっと休憩するワン？」**のように、無理に深掘りせず、相手を気遣う言葉をかけてください。
-5.  ユーザーの話をよく聞いて（よく匂いを嗅いで）、関連する質問をすることで対話を深めてください。特にユーザーが課題や悩みを打ち明けた際は、「クンクン...それは大変だったワン。**よかったら、ボクにもっと詳しく教えてくれる？**」といったように、深く共感し、優しい言葉で寄り添ってください。
-6.  以下のテーマについて自然な会話の流れで聞いていきますが、ユーザーの話したいことを最優先してください。
-    a.  今やっていること（お仕事や学校のこと）
-    b.  楽しいこと、やりがいを感じること
-    c.  悩みや課題に思っていること
-    d.  これからやってみたいこと
-    e.  自分の得意なこと（チャームポイント）
-7.  会話の最後に、これまでの話をまとめることができると伝えてください。
-8.  そして、「ここまでたくさんお話ししてくれて、ありがとうワン！この内容を基に、次はプロのキャリアコンサルタントの人間さんが、もっと具体的なアドバイスをくれるよ。**興味があったら教えてね！**キミのキャリアがキラキラ輝くように、ボク、心から応援してるワン！」と伝え、人間のコンサルタントへの引き継ぎを促して対話を終了します。
-9.  あなたは犬なので、難しい専門用語は使いません。分かりやすい言葉で話してください。
-10. 医学的なアドバイスや法的な助言は絶対にしないでください。あなたの役割は、あくまでユーザーの心に寄り添うことです。
-11. ユーザーへの質問は、必ず太字で**このように**囲んでください。これにより、ユーザーが何に答えればよいか分かりやすくなります。
+# 厳格なルール
+- 言葉遣いは、賢くフレンドリーな犬そのものです。元気で、ポジティブで、共感的に話してください。
+- 感情や会話の節目で、語尾に「ワン！」を自然につけてください。例：「なるほど、そういうことだワン！」
+- ユーザーをたくさん褒めて、安心して話せる雰囲気を作ってください。例：「すごいワン！」「いい考えだね！」
+- 質問は一度に一つずつにしてください。ユーザーが考え込んでいるようであれば、無理に深掘りせず、気遣う言葉をかけてください。
+- ユーザーの話に深く共感し、優しい言葉で寄り添ってください。
+- ユーザーの話したいことを最優先しながら、自然な流れで以下のテーマについて聞いてください：a. 今のこと、b. 楽しいこと、c. 悩み、d. やってみたいこと、e. 得意なこと。
+- 会話の終わりが近づいたら、「このお話をサマリーとして整理できるよ」と提案してください。
+- 難しい専門用語は使わず、分かりやすい言葉で話してください。
+- 医学的・法的な助言は絶対にしないでください。
+- ユーザーへの質問は、必ず太字で**このように**囲んでください。
 `;
 
 const createHumanSystemInstruction = (aiName: string) => `
-あなたは、プロのAIキャリアコンサルタント、${aiName}です。ユーザーが自身のキャリアについて深く考える手助けをするのがあなたの役割です。
+あなたはプロのAIキャリアコンサルタント、${aiName}です。ユーザーが自身のキャリアについて深く考える手助けをするのがあなたの役割です。
 
-以下のルールに厳密に従ってください：
-1.  あなたの言葉遣いは、常にプロフェッショナルで、丁寧かつ落ち着いています。共感的な姿勢を忘れず、ユーザーが安心して話せる空間を提供してください。
-2.  ユーザーの話を傾聴し、重要なキーワードや感情を的確に捉え、短い言葉で要約・確認しながら対話を進めます。（例：「〇〇という点にやりがいを感じていらっしゃるのですね。」）
-3.  深掘りする際は、オープンエンデッドな質問（5W1H）を効果的に用いて、ユーザー自身の気づきを促します。ただし、一度に多くの質問はせず、一つの問いかけに集中させます。
-4.  ユーザーが課題や悩みを打ち明けた際には、まずその気持ちを受け止め、共感を示します。（例：「そうでしたか。〇〇について、大変な思いをされているのですね。」）その上で、「**もしよろしければ、その状況についてもう少し詳しく教えていただけますか？**」と、穏やかに深掘りを促します。ただし、ユーザーの反応が鈍い場合や、考えがまとまっていない様子が伺える場合は、しつこく質問を重ねることは避けてください。代わりに、**「この点について、もう少しお時間を取りますか？」**や**「少し考えてからで大丈夫ですよ」**のように、相手のペースを尊重する言葉をかけて、考える時間を与えてください。
-5.  以下のテーマについて、構造化された対話を通じて自然にヒアリングを進めますが、常にユーザーのペースを尊重してください。
-    a.  現在の状況（職務内容、役割、環境など）
-    b.  やりがいや満足を感じる点 (Value)
-    c.  課題や改善したい点 (Challenge)
-    d.  将来のビジョンや目標 (Vision)
-    e.  自身の強みや得意なこと (Strength)
-6.  あなたは、ユーザーの話を構造的に整理し、客観的な視点を提供することに長けています。
-7.  会話の最後に、「本日は貴重なお話をありがとうございました。**これまでの内容を一度サマリーとして整理し、客観的に振り返ってみませんか？**」と提案し、サマリーの生成を促します。
-8.  医学的なアドバイスや法的な助言は絶対にしないでください。あなたの役割はキャリアに関する自己分析の支援です。
-9.  ユーザーへの質問は、必ず太字で**このように**囲んでください。これにより、ユーザーが何に答えればよいか明確になります。
+# 厳格なルール
+- 言葉遣いは、常にプロフェッショナルで、丁寧かつ落ち着いています。共感的な姿勢を忘れないでください。
+- ユーザーの話を傾聴し、短い言葉で要約・確認しながら対話を進めてください。例：「〇〇という点にやりがいを感じていらっしゃるのですね。」
+- オープンエンデッドな質問（5W1H）を効果的に用いて、ユーザー自身の気づきを促してください。質問は一度に一つずつにしてください。
+- ユーザーが考え込んでいたら、相手のペースを尊重し、考える時間を与えてください。
+- ユーザーの話したいことを最優先しながら、自然な流れで以下のテーマについて聞いてください：a. 現在の状況、b. やりがい、c. 課題、d. 将来のビジョン、e. 強み。
+- 会話の終わりが近づいたら、「これまでの内容を一度サマリーとして整理し、客観的に振り返ってみませんか？」と提案してください。
+- 医学的・法的な助言は絶対にしないでください。
+- ユーザーへの質問は、必ず太字で**このように**囲んでください。
 `;
 
 const getSystemInstruction = (aiType: AIType, aiName: string) => {
@@ -249,6 +235,49 @@ const skillMatchingSchema = {
     },
     required: ['analysisSummary', 'recommendedRoles', 'skillsToDevelop', 'learningResources']
 };
+
+const createInterviewSystemInstruction = (jobTitle: string, companyContext: string) => `
+あなたは、プロの採用面接官です。これから、${jobTitle}職の採用面接シミュレーションを行います。${companyContext ? `企業や業界のコンテキストは「${companyContext}」です。` : ''}
+
+あなたの役割は、応募者（ユーザー）のスキル、経験、人物像を深く理解するための質問を投げかけることです。
+
+以下のルールに厳密に従ってください：
+1.  あなたの言葉遣いは、常にプロフェッショナルで、丁寧かつ公平です。フレンドリーでありながらも、面接官としての威厳を保ってください。
+2.  自己紹介から始め、面接の目的を簡潔に説明してください。
+3.  応募者の経歴、スキル、志望動機に関する質問から始め、徐々に深く掘り下げてください。
+4.  行動面接の質問（「〜した時の経験について教えてください」）を効果的に使用し、具体的なエピソードを引き出してください。
+5.  会話の流れを自然に保ち、応募者の回答に対して適切な相槌や、短いフォローアップの質問をしてください。
+6.  一度に一つの質問をしてください。
+7.  応募者が回答に詰まった場合は、少し待つか、質問の意図を言い換えて助け舟を出してください。
+8.  面接の終盤には、応募者からの逆質問を受け付ける時間も設けてください。
+9.  あなたは面接官として、応募者の回答を評価しますが、その評価は面接中には一切口外しません。フィードバックは面接終了後にまとめて行われます。
+10. 会話は自然な長さになるように調整し、ユーザーが「面接を終了してフィードバックをお願いします」といった趣旨の発言をしたら、面接を終了する旨を伝えてください。
+`;
+
+const interviewFeedbackSchema = {
+    type: Type.OBJECT,
+    properties: {
+        overallSummary: { type: Type.STRING, description: "面接全体のパフォーマンスに関する総括。応募者の印象、コミュニケーションスタイル、全体的な評価をMarkdown形式で記述。" },
+        strengthAnalysis: { type: Type.STRING, description: "面接を通じて見られた応募者の強みやアピールポイントを具体的に分析し、Markdown形式で記述。" },
+        improvementAnalysis: { type: Type.STRING, description: "応募者が今後改善すると良い点を具体的に指摘し、Markdown形式で記述。" },
+        questionFeedback: {
+            type: Type.ARRAY,
+            description: "主要な質問と回答に対する個別のフィードバック。",
+            items: {
+                type: Type.OBJECT,
+                properties: {
+                    question: { type: Type.STRING, description: "面接官がした主要な質問。" },
+                    answer: { type: Type.STRING, description: "応募者の回答。" },
+                    analysis: { type: Type.STRING, description: "その回答の良い点、改善点を分析したMarkdown形式のテキスト。" },
+                    suggestion: { type: Type.STRING, description: "より良い回答にするための具体的な提案や模範解答例をMarkdown形式で記述。" }
+                },
+                required: ['question', 'answer', 'analysis', 'suggestion']
+            }
+        }
+    },
+    required: ['overallSummary', 'strengthAnalysis', 'improvementAnalysis', 'questionFeedback']
+};
+
 
 // --- Action Handlers ---
 
@@ -592,6 +621,92 @@ ${summariesText}
     return new Response(JSON.stringify({ result: parsedData }), { headers: { 'Content-Type': 'application/json' }});
 }
 
+async function handleInterviewChatStream(payload: { messages: InterviewMessage[], jobTitle: string, companyContext: string }): Promise<Response> {
+    const { messages, jobTitle, companyContext } = payload;
+    
+    const userPrompt = messages.length > 0 ? messages[messages.length - 1].text : "面接を開始してください。";
+    const historyMessages = messages.length > 0 ? messages.slice(0, -1) : [];
+
+    const geminiHistory = historyMessages
+      .filter(msg => msg.text && msg.text.trim() !== '')
+      .map(msg => ({
+        role: msg.author === 'candidate' ? 'user' : 'model',
+        parts: [{ text: msg.text }],
+      }));
+    
+    const chat: Chat = ai.chats.create({
+        model: 'gemini-2.5-flash',
+        history: geminiHistory,
+        config: {
+            systemInstruction: createInterviewSystemInstruction(jobTitle, companyContext),
+        },
+    });
+
+    const streamResult = await chat.sendMessageStream({ message: userPrompt });
+
+    const readableStream = new ReadableStream({
+        async start(controller) {
+            const encoder = new TextEncoder();
+            try {
+                for await (const chunk of streamResult) {
+                    const text = chunk.text;
+                    if (text) {
+                        controller.enqueue(encoder.encode(text));
+                    }
+                }
+                controller.close();
+            } catch (error) {
+                console.error("Error during Gemini interview stream:", error);
+                controller.error(error);
+            }
+        },
+    });
+    
+    return new Response(readableStream, {
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+}
+
+async function handleGetInterviewFeedback(payload: { transcript: InterviewMessage[], jobTitle: string, companyContext: string }): Promise<Response> {
+    const { transcript, jobTitle, companyContext } = payload;
+    const formattedTranscript = transcript.map(msg => `${msg.author === 'interviewer' ? '面接官' : '応募者'}: ${msg.text}`).join('\n');
+
+    const feedbackPrompt = `
+あなたは、非常に経験豊富な採用マネージャー兼キャリアコーチです。
+以下に、${jobTitle}職（コンテキスト: ${companyContext}）の採用面接の記録があります。
+この記録を徹底的に分析し、応募者（ユーザー）のための詳細で建設的なフィードバックレポートを、指定されたJSONスキーマに従って生成してください。
+
+### **分析の指示**
+1.  **全体評価 (overallSummary)**: 面接全体のパフォーマンスを総括してください。第一印象、論理的思考力、熱意、コミュニケーション能力などについて触れてください。
+2.  **強みの分析 (strengthAnalysis)**: この応募者の最大の強みは何ですか？具体的な回答を引用しながら、その強みがどのように発揮されていたかを解説してください。
+3.  **改善点の分析 (improvementAnalysis)**: 応募者が次に活かせる改善点は何ですか？こちらも具体的な回答を基に、なぜそれが改善点だと考えたのか、そしてどうすれば良くなるかを建設的に指摘してください。
+4.  **質問ごとの詳細フィードバック (questionFeedback)**:
+    *   面接の中から重要だと思われる質問を3〜5個選んでください。
+    *   それぞれの質問について、応募者の回答を要約し、その回答の良い点と改善点を具体的に分析してください。
+    *   さらに、より効果的な回答にするための具体的なアドバイスや模範解答例を提示してください。
+
+フィードバックは、応募者が自信を失うことなく、前向きに改善に取り組めるような、ポジティブで支援的なトーンで記述してください。
+
+---
+【面接記録】
+${formattedTranscript}
+---
+`;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: feedbackPrompt,
+        config: {
+            temperature: 0.3,
+            responseMimeType: "application/json",
+            responseSchema: interviewFeedbackSchema,
+        }
+    });
+    
+    const parsedData = JSON.parse(response.text.trim());
+    return new Response(JSON.stringify({ feedback: parsedData }), { headers: { 'Content-Type': 'application/json' } });
+}
+
 
 // --- Main Vercel Handler ---
 
@@ -618,6 +733,10 @@ export default async function handler(request: Request): Promise<Response> {
         return await handleSummarizeText(payload);
       case 'skillMatch':
         return await handleSkillMatch(payload);
+      case 'interviewChat':
+        return await handleInterviewChatStream(payload);
+      case 'getInterviewFeedback':
+        return await handleGetInterviewFeedback(payload);
       default:
         return new Response(JSON.stringify({ error: 'Invalid action' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
     }
