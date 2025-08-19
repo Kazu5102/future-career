@@ -1,7 +1,7 @@
 // This file is intended to be deployed as a Vercel Serverless Function.
 // It should be placed in the `/api` directory of your project.
 
-import { GoogleGenAI, GenerateContentResponse, Content, Type, Chat } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Content, Type } from "@google/genai";
 import { ChatMessage, MessageAuthor, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult, InterviewMessage, InterviewFeedback } from '../types';
 
 // Initialize the AI client on the server, where the API key is secure.
@@ -284,26 +284,29 @@ const interviewFeedbackSchema = {
 async function handleChatStream(payload: { messages: ChatMessage[], aiType: AIType, aiName: string }): Promise<Response> {
   const { messages, aiType, aiName } = payload;
 
-  // ユーザーの最後のプロンプトを取得
-  const userPrompt = messages[messages.length - 1];
-  // それ以前の会話履歴を取得
-  const historyMessages = messages.slice(0, messages.length - 1);
-  
-  if (userPrompt.author !== MessageAuthor.USER) {
-      return new Response(JSON.stringify({ error: 'Bad Request: Last message must be from user.' }), { status: 400 });
-  }
-
-  // Gemini APIが要求する形式に会話履歴を変換
-  const geminiHistory = historyMessages
-    .filter(msg => msg.text && msg.text.trim() !== '') // 空のメッセージを除外
+  // Convert to Gemini API's format.
+  let geminiContents: Content[] = messages
+    .filter(msg => msg.text && msg.text.trim() !== '')
     .map(msg => ({
       role: msg.author === MessageAuthor.USER ? 'user' : 'model',
       parts: [{ text: msg.text }],
     }));
 
-  const chat: Chat = ai.chats.create({
+  // The Gemini API requires conversations to start with a 'user' role.
+  // If our history starts with 'model' (our initial greeting), we prepend a synthetic user message
+  // to create a valid conversation structure.
+  if (geminiContents.length > 0 && geminiContents[0].role === 'model') {
+    geminiContents.unshift({ role: 'user', parts: [{ text: 'こんにちは、キャリア相談をお願いします。' }] });
+  }
+  
+  // The conversation history must not be empty and must end with a user message for the model to respond to.
+  if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
+      return new Response(JSON.stringify({ error: 'Bad Request: Invalid chat history sequence.' }), { status: 400 });
+  }
+
+  const streamResult = await ai.models.generateContentStream({
     model: 'gemini-2.5-flash',
-    history: geminiHistory,
+    contents: geminiContents,
     config: {
       systemInstruction: getSystemInstruction(aiType, aiName),
       temperature: aiType === 'dog' ? 0.8 : 0.6,
@@ -311,8 +314,6 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
       topP: 0.95,
     },
   });
-
-  const streamResult = await chat.sendMessageStream({ message: userPrompt.text });
 
   const readableStream = new ReadableStream({
     async start(controller) {
@@ -327,7 +328,6 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
         controller.close();
       } catch (error) {
         console.error("Error during Gemini stream generation:", error);
-        // Propagate the error to the stream consumer (the frontend)
         controller.error(error);
       }
     },
@@ -624,25 +624,35 @@ ${summariesText}
 async function handleInterviewChatStream(payload: { messages: InterviewMessage[], jobTitle: string, companyContext: string }): Promise<Response> {
     const { messages, jobTitle, companyContext } = payload;
     
-    const userPrompt = messages.length > 0 ? messages[messages.length - 1].text : "面接を開始してください。";
-    const historyMessages = messages.length > 0 ? messages.slice(0, -1) : [];
-
-    const geminiHistory = historyMessages
+    // Convert to Gemini API's format.
+    let geminiContents: Content[] = messages
       .filter(msg => msg.text && msg.text.trim() !== '')
       .map(msg => ({
         role: msg.author === 'candidate' ? 'user' : 'model',
         parts: [{ text: msg.text }],
       }));
+
+    if (geminiContents.length === 0) {
+        // This is the first call to start the interview.
+        geminiContents.push({ role: 'user', parts: [{ text: 'こんにちは。これから模擬面接をお願いします。準備ができましたら、最初の質問から始めてください。' }] });
+    } else if (geminiContents[0].role === 'model') {
+        // If the history starts with a model (interviewer) message, prepend a synthetic user message
+        // to make the sequence valid. This maintains the context of the interview starting.
+        geminiContents.unshift({ role: 'user', parts: [{ text: 'こんにちは。これから模擬面接をお願いします。' }] });
+    }
+
+    // The conversation history must end with a user message for the model to respond to.
+    if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
+        return new Response(JSON.stringify({ error: 'Bad Request: Invalid interview history sequence.' }), { status: 400 });
+    }
     
-    const chat: Chat = ai.chats.create({
+    const streamResult = await ai.models.generateContentStream({
         model: 'gemini-2.5-flash',
-        history: geminiHistory,
+        contents: geminiContents,
         config: {
             systemInstruction: createInterviewSystemInstruction(jobTitle, companyContext),
         },
     });
-
-    const streamResult = await chat.sendMessageStream({ message: userPrompt });
 
     const readableStream = new ReadableStream({
         async start(controller) {
