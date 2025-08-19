@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { StoredConversation, StoredData, STORAGE_VERSION, AnalysisData, IndividualAnalysisData } from '../types';
 import { analyzeConversations, generateSummaryFromText, analyzeIndividualConversations } from '../services/geminiService';
+import { verifyPassword, setPassword } from '../utils/auth';
 import ConversationDetailModal from '../components/ConversationDetailModal';
 import AnalysisDisplay from '../components/AnalysisDisplay';
 import AnalyticsIcon from '../components/icons/AnalyticsIcon';
@@ -10,6 +11,10 @@ import TrashIcon from '../components/icons/TrashIcon';
 import ImportIcon from '../components/icons/ImportIcon';
 import ExportIcon from '../components/icons/ExportIcon';
 import ChevronDownIcon from '../components/icons/ChevronDownIcon';
+import KeyIcon from '../components/icons/KeyIcon';
+import EyeIcon from '../components/icons/EyeIcon';
+import EyeOffIcon from '../components/icons/EyeOffIcon';
+
 
 interface GroupedConversations {
     [userId: string]: StoredConversation[];
@@ -27,6 +32,14 @@ const AdminView: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
   const [analyzedUserId, setAnalyzedUserId] = useState<string | null>(null);
+
+  // Password change state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordMessage, setPasswordMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   useEffect(() => {
     const storedDataRaw = localStorage.getItem('careerConsultations');
@@ -333,6 +346,32 @@ const AdminView: React.FC = () => {
         return newSet;
     });
   };
+  
+  const handlePasswordChange = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setPasswordMessage(null);
+
+    if (!verifyPassword(currentPassword)) {
+        setPasswordMessage({ type: 'error', text: '現在のパスワードが正しくありません。' });
+        return;
+    }
+    if (!newPassword) {
+        setPasswordMessage({ type: 'error', text: '新しいパスワードを入力してください。' });
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        setPasswordMessage({ type: 'error', text: '新しいパスワードが一致しません。' });
+        return;
+    }
+    
+    setPassword(newPassword);
+    setPasswordMessage({ type: 'success', text: 'パスワードが正常に変更されました。' });
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowCurrentPassword(false);
+    setShowNewPassword(false);
+  };
 
   const isAnalyzingAnything = isAnalyzing || isAnalyzingIndividual || isImporting;
 
@@ -408,6 +447,24 @@ const AdminView: React.FC = () => {
                   <p className="text-sm mt-1">ユーザーが相談を完了するとここに表示されます。</p>
               </div>
             )}
+          </div>
+          <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-600 px-1">セキュリティ設定</h3>
+            <form onSubmit={handlePasswordChange} className="space-y-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                <div className="relative">
+                    <input type={showCurrentPassword ? "text" : "password"} placeholder="現在のパスワード" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} className="w-full text-sm p-2 border border-slate-300 rounded-md focus:ring-sky-500 focus:border-sky-500" />
+                    <button type="button" onClick={() => setShowCurrentPassword(!showCurrentPassword)} className="absolute inset-y-0 right-0 px-3 text-slate-500">{showCurrentPassword ? <EyeOffIcon/> : <EyeIcon />}</button>
+                </div>
+                <div className="relative">
+                    <input type={showNewPassword ? "text" : "password"} placeholder="新しいパスワード" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full text-sm p-2 border border-slate-300 rounded-md focus:ring-sky-500 focus:border-sky-500" />
+                     <button type="button" onClick={() => setShowNewPassword(!showNewPassword)} className="absolute inset-y-0 right-0 px-3 text-slate-500">{showNewPassword ? <EyeOffIcon/> : <EyeIcon />}</button>
+                </div>
+                 <div className="relative">
+                    <input type={showNewPassword ? "text" : "password"} placeholder="新しいパスワード (確認)" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="w-full text-sm p-2 border border-slate-300 rounded-md focus:ring-sky-500 focus:border-sky-500" />
+                </div>
+                <button type="submit" className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-600 text-white font-semibold rounded-lg shadow-sm hover:bg-slate-700 text-sm"><KeyIcon />パスワードを変更</button>
+                {passwordMessage && <p className={`text-xs mt-2 text-center font-semibold ${passwordMessage.type === 'success' ? 'text-emerald-600' : 'text-red-600'}`}>{passwordMessage.text}</p>}
+            </form>
           </div>
           <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
               <h3 className="text-sm font-semibold text-slate-600 px-1">データ管理</h3>
