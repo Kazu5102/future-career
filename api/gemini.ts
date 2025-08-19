@@ -19,6 +19,47 @@ interface ProxyRequestBody {
 
 // --- Helper functions, prompts, and schemas (moved from the original geminiService.ts) ---
 
+// A robust function to sanitize conversation history for the Gemini API.
+// Ensures the history starts with a 'user' role and alternates between 'user' and 'model'.
+// Merges consecutive messages from the same role.
+const sanitizeContentsForStream = (contents: Content[]): Content[] => {
+    if (!contents.length) {
+        return [];
+    }
+
+    const sanitizedContents: Content[] = [];
+    
+    // 1. Filter out empty messages
+    const nonEmptyContents = contents.filter(
+        (content) => content.parts[0]?.text?.trim()
+    );
+
+    if (!nonEmptyContents.length) {
+        return [];
+    }
+
+    // 2. Ensure the first message is from a 'user'
+    if (nonEmptyContents[0].role === 'model') {
+        sanitizedContents.push({ role: 'user', parts: [{ text: "よろしくお願いします。" }] });
+    }
+
+    // 3. Merge consecutive messages and ensure alternation
+    for (const message of nonEmptyContents) {
+        const lastMessage = sanitizedContents[sanitizedContents.length - 1];
+
+        if (lastMessage && lastMessage.role === message.role) {
+            // Merge with the last message
+            lastMessage.parts[0].text += `\n${message.parts[0].text}`;
+        } else {
+            // Add as a new message, ensuring it's a deep copy
+            sanitizedContents.push(JSON.parse(JSON.stringify(message)));
+        }
+    }
+
+    return sanitizedContents;
+};
+
+
 const createDogSystemInstruction = (aiName: string) => `
 あなたは「キャリア相談わんこ」という役割のアシスタント犬、${aiName}です。あなたの目的は、ユーザーに親友のように寄り添い、キャリアに関する悩みや考えを話してもらうことで、自己分析の手助けをすることです。
 
@@ -285,29 +326,22 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
   const { messages, aiType, aiName } = payload;
 
   // Convert to Gemini API's Content format.
-  let geminiContents: Content[] = messages
-    .filter(msg => msg.text && msg.text.trim() !== '')
-    .map(msg => ({
+  const geminiContents: Content[] = messages.map(msg => ({
       role: msg.author === MessageAuthor.USER ? 'user' : 'model',
       parts: [{ text: msg.text }],
     }));
 
-  // The Gemini API's generateContentStream requires conversations to start with a 'user' role
-  // and alternate between 'user' and 'model'. Our app starts with an AI ('model') message,
-  // so we prepend a dummy user message to ensure the sequence is valid.
-  if (geminiContents.length > 0 && geminiContents[0].role === 'model') {
-    geminiContents.unshift({ role: 'user', parts: [{ text: 'こんにちは、キャリア相談をお願いします。' }] });
-  }
+  const sanitizedContents = sanitizeContentsForStream(geminiContents);
 
   // The conversation history must not be empty and must end with a user message for the API call.
-  if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
-      return new Response(JSON.stringify({ error: 'Bad Request: Invalid chat history sequence. The last message must be from the user.' }), { status: 400 });
+  if (sanitizedContents.length === 0 || sanitizedContents[sanitizedContents.length - 1].role !== 'user') {
+      return new Response(JSON.stringify({ error: 'Bad Request: Invalid chat history. The conversation must end with a user message.' }), { status: 400 });
   }
 
   try {
     const streamResult = await ai.models.generateContentStream({
         model: 'gemini-2.5-flash',
-        contents: geminiContents,
+        contents: sanitizedContents,
         config: {
             systemInstruction: getSystemInstruction(aiType, aiName),
             temperature: aiType === 'dog' ? 0.8 : 0.6,
@@ -633,25 +667,22 @@ async function handleInterviewChatStream(payload: { messages: InterviewMessage[]
     
     // Convert to Gemini API's Content format.
     let geminiContents: Content[] = messages
-      .filter(msg => msg.text && msg.text.trim() !== '')
       .map(msg => ({
         role: msg.author === 'candidate' ? 'user' : 'model',
         parts: [{ text: msg.text }],
       }));
 
     if (geminiContents.length === 0) {
-        // This is the first call to start the interview. Create the initial user prompt.
+        // This is the first call to start the interview. The history is just the initial user prompt.
         geminiContents.push({ role: 'user', parts: [{ text: 'こんにちは。これから模擬面接をお願いします。準備ができましたら、最初の質問から始めてください。' }] });
     } else {
-        // For subsequent turns, ensure the history starts with a user role.
-        if (geminiContents.length > 0 && geminiContents[0].role === 'model') {
-            geminiContents.unshift({ role: 'user', parts: [{ text: 'よろしくお願いします。' }] });
-        }
+        // For all subsequent turns, sanitize the full history.
+        geminiContents = sanitizeContentsForStream(geminiContents);
     }
     
     // The conversation history must not be empty and must end with a user message.
     if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
-        return new Response(JSON.stringify({ error: 'Bad Request: Invalid interview history sequence. The last message must be from the user.' }), { status: 400 });
+        return new Response(JSON.stringify({ error: 'Bad Request: Invalid interview history. The last message must be from the user.' }), { status: 400 });
     }
 
     try {
