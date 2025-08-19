@@ -2,7 +2,7 @@
 // This file is intended to be deployed as a Vercel Serverless Function.
 // It should be placed in the `/api` directory of your project.
 
-import { GoogleGenAI, GenerateContentResponse, Content, Type } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Content, Type, Chat } from "@google/genai";
 import { ChatMessage, MessageAuthor, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult } from '../types';
 
 // Initialize the AI client on the server, where the API key is secure.
@@ -67,15 +67,6 @@ const getSystemInstruction = (aiType: AIType, aiName: string) => {
         return createHumanSystemInstruction(aiName);
     }
     return createDogSystemInstruction(aiName);
-};
-
-
-const convertMessagesToGeminiHistory = (messages: ChatMessage[]): Content[] => {
-    const history = messages.slice(1); 
-    return history.map(msg => ({
-        role: msg.author === MessageAuthor.USER ? 'user' : 'model',
-        parts: [{ text: msg.text }],
-    }));
 };
 
 const analysisSchema = {
@@ -262,11 +253,25 @@ const skillMatchingSchema = {
 
 async function handleChatStream(payload: { messages: ChatMessage[], aiType: AIType, aiName: string }): Promise<Response> {
   const { messages, aiType, aiName } = payload;
-  const contents = convertMessagesToGeminiHistory(messages);
 
-  const streamResult = await ai.models.generateContentStream({
+  // ユーザーの最後のプロンプトを取得
+  const userPrompt = messages[messages.length - 1];
+  // それ以前の会話履歴を取得
+  const historyMessages = messages.slice(0, messages.length - 1);
+  
+  if (userPrompt.author !== MessageAuthor.USER) {
+      return new Response(JSON.stringify({ error: 'Bad Request: Last message must be from user.' }), { status: 400 });
+  }
+
+  // Gemini APIが要求する形式に会話履歴を変換
+  const geminiHistory = historyMessages.map(msg => ({
+      role: msg.author === MessageAuthor.USER ? 'user' : 'model',
+      parts: [{ text: msg.text }],
+  }));
+
+  const chat: Chat = ai.chats.create({
     model: 'gemini-2.5-flash',
-    contents: contents,
+    history: geminiHistory,
     config: {
       systemInstruction: getSystemInstruction(aiType, aiName),
       temperature: aiType === 'dog' ? 0.8 : 0.6,
@@ -274,6 +279,8 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
       topP: 0.95,
     },
   });
+
+  const streamResult = await chat.sendMessageStream({ message: userPrompt.text });
 
   const readableStream = new ReadableStream({
     async start(controller) {
