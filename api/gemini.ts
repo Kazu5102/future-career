@@ -1,7 +1,7 @@
 // This file is intended to be deployed as a Vercel Serverless Function.
 // It should be placed in the `/api` directory of your project.
 
-import { GoogleGenAI, GenerateContentResponse, Content, Type, Chat } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse, Content, Type } from "@google/genai";
 import { ChatMessage, MessageAuthor, StoredConversation, AnalysisData, AIType, IndividualAnalysisData, SkillMatchingResult, InterviewMessage, InterviewFeedback } from '../types';
 
 // Initialize the AI client on the server, where the API key is secure.
@@ -284,7 +284,7 @@ const interviewFeedbackSchema = {
 async function handleChatStream(payload: { messages: ChatMessage[], aiType: AIType, aiName: string }): Promise<Response> {
   const { messages, aiType, aiName } = payload;
 
-  // Convert to Gemini API's format.
+  // Convert to Gemini API's Content format.
   let geminiContents: Content[] = messages
     .filter(msg => msg.text && msg.text.trim() !== '')
     .map(msg => ({
@@ -292,53 +292,57 @@ async function handleChatStream(payload: { messages: ChatMessage[], aiType: AITy
       parts: [{ text: msg.text }],
     }));
 
-  // The Gemini API requires conversations to start with a 'user' role.
+  // The Gemini API's generateContentStream requires conversations to start with a 'user' role
+  // and alternate between 'user' and 'model'. Our app starts with an AI ('model') message,
+  // so we prepend a dummy user message to ensure the sequence is valid.
   if (geminiContents.length > 0 && geminiContents[0].role === 'model') {
     geminiContents.unshift({ role: 'user', parts: [{ text: 'こんにちは、キャリア相談をお願いします。' }] });
   }
-  
-  // The conversation history must not be empty and must end with a user message.
+
+  // The conversation history must not be empty and must end with a user message for the API call.
   if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
-      return new Response(JSON.stringify({ error: 'Bad Request: Invalid chat history sequence.' }), { status: 400 });
+      return new Response(JSON.stringify({ error: 'Bad Request: Invalid chat history sequence. The last message must be from the user.' }), { status: 400 });
   }
 
-  const history = geminiContents.slice(0, -1);
-  const latestUserMessage = geminiContents[geminiContents.length - 1].parts[0].text;
-  
-  const chat: Chat = ai.chats.create({
-      model: 'gemini-2.5-flash',
-      history: history,
-      config: {
-          systemInstruction: getSystemInstruction(aiType, aiName),
-          temperature: aiType === 'dog' ? 0.8 : 0.6,
-          topK: 40,
-          topP: 0.95,
-      }
-  });
-
-  const streamResult = await chat.sendMessageStream({ message: latestUserMessage });
-
-  const readableStream = new ReadableStream({
-    async start(controller) {
-      const encoder = new TextEncoder();
-      try {
-        for await (const chunk of streamResult) {
-          const text = chunk.text;
-          if (text) {
-            controller.enqueue(encoder.encode(text));
-          }
+  try {
+    const streamResult = await ai.models.generateContentStream({
+        model: 'gemini-2.5-flash',
+        contents: geminiContents,
+        config: {
+            systemInstruction: getSystemInstruction(aiType, aiName),
+            temperature: aiType === 'dog' ? 0.8 : 0.6,
+            topK: 40,
+            topP: 0.95,
         }
-        controller.close();
-      } catch (error) {
-        console.error("Error during Gemini stream generation:", error);
-        controller.error(error);
-      }
-    },
-  });
-  
-  return new Response(readableStream, {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-  });
+    });
+
+    const readableStream = new ReadableStream({
+      async start(controller) {
+        const encoder = new TextEncoder();
+        try {
+          for await (const chunk of streamResult) {
+            const text = chunk.text;
+            if (text) {
+              controller.enqueue(encoder.encode(text));
+            }
+          }
+          controller.close();
+        } catch (error) {
+          console.error("Error during Gemini stream generation in readableStream:", error);
+          controller.error(error);
+        }
+      },
+    });
+    
+    return new Response(readableStream, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+
+  } catch (error) {
+     console.error("Error calling generateContentStream:", error);
+     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+     return new Response(JSON.stringify({ error: 'Gemini API Error', details: errorMessage }), { status: 500 });
+  }
 }
 
 async function handleSummarize(payload: { chatHistory: ChatMessage[], aiType: AIType, aiName: string }): Promise<Response> {
@@ -627,7 +631,7 @@ ${summariesText}
 async function handleInterviewChatStream(payload: { messages: InterviewMessage[], jobTitle: string, companyContext: string }): Promise<Response> {
     const { messages, jobTitle, companyContext } = payload;
     
-    // Convert to Gemini API's format.
+    // Convert to Gemini API's Content format.
     let geminiContents: Content[] = messages
       .filter(msg => msg.text && msg.text.trim() !== '')
       .map(msg => ({
@@ -635,57 +639,56 @@ async function handleInterviewChatStream(payload: { messages: InterviewMessage[]
         parts: [{ text: msg.text }],
       }));
 
-    let latestUserMessage: string;
-
     if (geminiContents.length === 0) {
-        // This is the first call to start the interview.
-        latestUserMessage = 'こんにちは。これから模擬面接をお願いします。準備ができましたら、最初の質問から始めてください。';
-        geminiContents = []; // History is empty
+        // This is the first call to start the interview. Create the initial user prompt.
+        geminiContents.push({ role: 'user', parts: [{ text: 'こんにちは。これから模擬面接をお願いします。準備ができましたら、最初の質問から始めてください。' }] });
     } else {
-         // The Gemini API requires conversations to start with a 'user' role.
+        // For subsequent turns, ensure the history starts with a user role.
         if (geminiContents.length > 0 && geminiContents[0].role === 'model') {
-            geminiContents.unshift({ role: 'user', parts: [{ text: 'こんにちは。これから模擬面接をお願いします。' }] });
+            geminiContents.unshift({ role: 'user', parts: [{ text: 'よろしくお願いします。' }] });
         }
-        
-        // The conversation history must end with a user message.
-        if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
-            return new Response(JSON.stringify({ error: 'Bad Request: Invalid interview history sequence.' }), { status: 400 });
-        }
-        latestUserMessage = geminiContents[geminiContents.length - 1].parts[0].text;
-        geminiContents = geminiContents.slice(0, -1); // History is everything except the last message
     }
     
-    const chat: Chat = ai.chats.create({
-        model: 'gemini-2.5-flash',
-        history: geminiContents,
-        config: {
-             systemInstruction: createInterviewSystemInstruction(jobTitle, companyContext),
-        }
-    });
-    
-    const streamResult = await chat.sendMessageStream({ message: latestUserMessage });
+    // The conversation history must not be empty and must end with a user message.
+    if (geminiContents.length === 0 || geminiContents[geminiContents.length - 1].role !== 'user') {
+        return new Response(JSON.stringify({ error: 'Bad Request: Invalid interview history sequence. The last message must be from the user.' }), { status: 400 });
+    }
 
-    const readableStream = new ReadableStream({
-        async start(controller) {
-            const encoder = new TextEncoder();
-            try {
-                for await (const chunk of streamResult) {
-                    const text = chunk.text;
-                    if (text) {
-                        controller.enqueue(encoder.encode(text));
-                    }
-                }
-                controller.close();
-            } catch (error) {
-                console.error("Error during Gemini interview stream:", error);
-                controller.error(error);
+    try {
+        const streamResult = await ai.models.generateContentStream({
+            model: 'gemini-2.5-flash',
+            contents: geminiContents,
+            config: {
+                systemInstruction: createInterviewSystemInstruction(jobTitle, companyContext),
             }
-        },
-    });
-    
-    return new Response(readableStream, {
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
-    });
+        });
+
+        const readableStream = new ReadableStream({
+            async start(controller) {
+                const encoder = new TextEncoder();
+                try {
+                    for await (const chunk of streamResult) {
+                        const text = chunk.text;
+                        if (text) {
+                            controller.enqueue(encoder.encode(text));
+                        }
+                    }
+                    controller.close();
+                } catch (error) {
+                    console.error("Error during Gemini interview stream generation in readableStream:", error);
+                    controller.error(error);
+                }
+            },
+        });
+        
+        return new Response(readableStream, {
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        });
+    } catch (error) {
+        console.error("Error calling generateContentStream for interview:", error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+        return new Response(JSON.stringify({ error: 'Gemini API Error', details: errorMessage }), { status: 500 });
+    }
 }
 
 async function handleGetInterviewFeedback(payload: { transcript: InterviewMessage[], jobTitle: string, companyContext: string }): Promise<Response> {
