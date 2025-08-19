@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { StoredConversation, StoredData, STORAGE_VERSION, AnalysisData, IndividualAnalysisData } from '../types';
 import { analyzeConversations, generateSummaryFromText, analyzeIndividualConversations } from '../services/geminiService';
+import { setPassword } from '../services/authService';
 import ConversationDetailModal from '../components/ConversationDetailModal';
 import AnalysisDisplay from '../components/AnalysisDisplay';
 import AnalyticsIcon from '../components/icons/AnalyticsIcon';
@@ -10,6 +11,7 @@ import TrashIcon from '../components/icons/TrashIcon';
 import ImportIcon from '../components/icons/ImportIcon';
 import ExportIcon from '../components/icons/ExportIcon';
 import ChevronDownIcon from '../components/icons/ChevronDownIcon';
+import KeyIcon from '../components/icons/KeyIcon';
 
 interface GroupedConversations {
     [userId: string]: StoredConversation[];
@@ -27,6 +29,11 @@ const AdminView: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
   const [analyzedUserId, setAnalyzedUserId] = useState<string | null>(null);
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordMessage, setPasswordMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
 
   useEffect(() => {
     const storedDataRaw = localStorage.getItem('careerConsultations');
@@ -334,6 +341,18 @@ const AdminView: React.FC = () => {
     });
   };
 
+  const handleChangePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordMessage(null);
+    const result = setPassword(newPassword, currentPassword);
+    setPasswordMessage({ text: result.message, type: result.success ? 'success' : 'error' });
+    if (result.success) {
+        setCurrentPassword('');
+        setNewPassword('');
+        setTimeout(() => setPasswordMessage(null), 4000);
+    }
+  };
+
   const isAnalyzingAnything = isAnalyzing || isAnalyzingIndividual || isImporting;
 
   return (
@@ -409,7 +428,7 @@ const AdminView: React.FC = () => {
               </div>
             )}
           </div>
-          <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+          <div className="mt-auto pt-4 border-t border-slate-200 space-y-3">
               <h3 className="text-sm font-semibold text-slate-600 px-1">データ管理</h3>
               <div className="flex gap-2">
                   <button
@@ -438,6 +457,39 @@ const AdminView: React.FC = () => {
                       全履歴を削除
                   </button>
               )}
+               <div className="pt-3 mt-3 border-t border-slate-200">
+                <h3 className="text-sm font-semibold text-slate-600 px-1 mb-2 flex items-center gap-2"><KeyIcon />セキュリティ設定</h3>
+                <form onSubmit={handleChangePassword} className="space-y-2">
+                    <input
+                        type="password"
+                        placeholder="現在のパスワード"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-100 rounded-md border border-slate-300 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                        required
+                    />
+                    <input
+                        type="password"
+                        placeholder="新しいパスワード (4文字以上)"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-slate-100 rounded-md border border-slate-300 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                        required
+                        minLength={4}
+                    />
+                    <button
+                        type="submit"
+                        className="w-full px-4 py-2 bg-slate-800 text-white font-semibold rounded-lg shadow-sm hover:bg-slate-700 transition-colors"
+                    >
+                        パスワードを変更
+                    </button>
+                    {passwordMessage && (
+                        <p className={`text-xs mt-1 px-1 ${passwordMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                            {passwordMessage.text}
+                        </p>
+                    )}
+                </form>
+            </div>
           </div>
         </aside>
 
