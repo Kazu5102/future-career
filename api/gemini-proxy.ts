@@ -1,11 +1,19 @@
+
+
 // ===================================================================================
 //  これはサーバー環境（例: Vercel, Netlifyのサーバーレス関数）で動作する
-//  バックエンドプロキシです。
-//  このファイルが `/api` ディレクトリにあれば、
-//  `/api/gemini-proxy` というAPIエンドポイントとしてデプロイされます。
+//  バックエンドプロキシのサンプルコードです。
+//  このファイルはフロントエンドのプロジェクトでは直接実行されません。
+//  デプロイ時に、ホスティングプラットフォームがこのコードから
+//  `/api/gemini-proxy`のようなAPIエンドポイントを生成します。
 // ===================================================================================
-import { GoogleGenAI, GenerateContentResponse, Content, Type } from "@google/genai";
-import { ChatMessage, MessageAuthor, AIType, StoredConversation, SkillToDevelop } from '../types';
+
+import { GoogleGenAI, GenerateContentResponse, Content } from "@google/genai";
+import { ChatMessage, MessageAuthor, AIType } from '../types';
+
+// The actual request/response objects depend on the hosting platform's environment.
+// This is a conceptual example that aligns with the fetch API standard.
+// For example, in Vercel, the function signature is `export default async function handler(request: Request)`.
 
 // Initialize the AI client on the server, where the API key is secure
 if (!process.env.API_KEY) {
@@ -15,12 +23,40 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // The structure of the request body from the frontend
 interface ProxyRequestBody {
-  action: string;
+  action: 'chat' | 'summarize' | 'revise' | 'analyze';
   payload: any;
 }
 
+// Main handler function (conceptual)
+// This function would be the entry point for your serverless function.
+export default async function handler(request: Request): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), { status: 405, headers: { 'Content-Type': 'application/json' } });
+  }
 
-// --- Helper Functions (Moved from frontend) ---
+  try {
+    const { action, payload } = (await request.json()) as ProxyRequestBody;
+
+    switch (action) {
+      case 'chat':
+        return await handleChatStream(payload);
+      case 'summarize':
+        return await handleSummarize(payload);
+      case 'revise':
+        return await handleRevise(payload);
+      case 'analyze':
+        return await handleAnalyze(payload);
+      default:
+        return new Response(JSON.stringify({ error: 'Invalid action' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+  } catch (error) {
+    console.error(`Error in proxy function:`, error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    return new Response(JSON.stringify({ error: 'Internal Server Error', details: errorMessage }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+  }
+}
+
+// --- Action Handlers ---
 
 const createDogSystemInstruction = (aiName: string) => `
 あなたは「キャリア相談わんこ」という役割のアシスタント犬、${aiName}です。あなたの目的は、ユーザーに親友のように寄り添い、キャリアに関する悩みや考えを話してもらうことで、自己分析の手助けをすることです。
@@ -80,229 +116,6 @@ const convertMessagesToGeminiHistory = (messages: ChatMessage[]): Content[] => {
     }));
 };
 
-// --- Schemas (Moved from frontend) ---
-
-const analysisSchema = {
-  type: Type.OBJECT,
-  properties: {
-    keyMetrics: {
-      type: Type.OBJECT,
-      description: "分析のキーとなる指標",
-      properties: {
-        totalConsultations: { type: Type.NUMBER, description: '分析対象の相談の総数' },
-        commonIndustries: { type: Type.ARRAY, description: '相談者によく見られる業界トップ3を抽出する', items: { type: Type.STRING }},
-      },
-      required: ['totalConsultations', 'commonIndustries'],
-    },
-    commonChallenges: {
-      type: Type.ARRAY,
-      description: '相談者が抱える共通の課題を分類し、上位5項目を抽出する。各項目の割合（value）の合計が100になるように正規化する。',
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          label: { type: Type.STRING, description: '課題の内容 (例: キャリアパスの悩み)' },
-          value: { type: Type.NUMBER, description: 'その課題を持つ相談者の割合（パーセント）' },
-        },
-        required: ['label', 'value'],
-      },
-    },
-    careerAspirations: {
-      type: Type.ARRAY,
-      description: '相談者のキャリアに関する希望を分類し、上位5項目を抽出する。各項目の割合（value）の合計が100になるように正規化する。',
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          label: { type: Type.STRING, description: 'キャリアの希望の内容 (例: スキルアップ)' },
-          value: { type: Type.NUMBER, description: 'その希望を持つ相談者の割合（パーセント）' },
-        },
-        required: ['label', 'value'],
-      },
-    },
-    commonStrengths: {
-        type: Type.ARRAY,
-        description: '相談者が自己認識している共通の強みを5つ抽出する',
-        items: { type: Type.STRING }
-    },
-    overallInsights: {
-      type: Type.STRING,
-      description: '以前の形式と同様の、詳細な分析と提言を含むMarkdown形式のレポート。'
-    }
-  },
-  required: ['keyMetrics', 'commonChallenges', 'careerAspirations', 'commonStrengths', 'overallInsights'],
-};
-
-const skillMatchingSchemaForIndividualAnalysis = {
-    type: Type.OBJECT,
-    properties: {
-        analysisSummary: { type: Type.STRING, description: "ユーザーの強み、興味、価値観を分析したMarkdown形式のサマリー。" },
-        recommendedRoles: {
-            type: Type.ARRAY,
-            description: "ユーザーの特性にマッチすると思われる職種を3〜5個提案するリスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    role: { type: Type.STRING, description: "推奨される職種名 (例: データアナリスト)" },
-                    reason: { type: Type.STRING, description: "その職種を推奨する理由についての簡潔な説明。" },
-                    matchScore: { type: Type.NUMBER, description: "ユーザーとの適性度を0から100の数値で示すスコア。" }
-                },
-                required: ['role', 'reason', 'matchScore']
-            }
-        },
-        skillsToDevelop: {
-            type: Type.ARRAY,
-            description: "推奨職種に就くために、今後伸ばすと良いスキルや知識のリスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    skill: { type: Type.STRING, description: "学習を推奨するスキル名 (例: Python, SQL)" },
-                    reason: { type: Type.STRING, description: "そのスキルがなぜ重要かの簡潔な説明。" }
-                },
-                required: ['skill', 'reason']
-            }
-        },
-        learningResources: {
-            type: Type.ARRAY,
-            description: "スキル習得に役立つ具体的な学習リソース（オンラインコース、書籍、記事など）のリスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    title: { type: Type.STRING, description: "リソースのタイトル。" },
-                    type: { type: Type.STRING, enum: ['course', 'book', 'article', 'video'], description: "リソースの種類。" },
-                    url: { type: Type.STRING, description: "リソースへのアクセスURL。" }
-                },
-                required: ['title', 'type', 'url']
-            }
-        }
-    },
-    required: ['analysisSummary', 'recommendedRoles', 'skillsToDevelop', 'learningResources']
-};
-
-const individualAnalysisSchema = {
-    type: Type.OBJECT,
-    properties: {
-        userId: { type: Type.STRING, description: "分析対象のユーザーID" },
-        totalConsultations: { type: Type.NUMBER, description: "このユーザーの相談総数" },
-        consultations: {
-            type: Type.ARRAY,
-            description: "個々の相談セッションの詳細リスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    dateTime: { type: Type.STRING, description: "相談が行われた正確な日時 (例: '2024年7月31日 11:00')" },
-                    estimatedDurationMinutes: { type: Type.NUMBER, description: "サマリーの内容の濃さや長さから推測される、その相談のおおよその時間（分単位）。" },
-                },
-                required: ['dateTime', 'estimatedDurationMinutes'],
-            }
-        },
-        keyThemes: { type: Type.ARRAY, description: "相談全体で繰り返し現れる主要なテーマや悩み (3-5個)", items: { type: Type.STRING } },
-        detectedStrengths: { type: Type.ARRAY, description: "対話から読み取れる、ユーザーの潜在的な強みや資質 (3-5個)", items: { type: Type.STRING } },
-        areasForDevelopment: { type: Type.ARRAY, description: "ユーザーが成長するために取り組むと良い可能性のある領域 (3-5個)", items: { type: Type.STRING } },
-        suggestedNextSteps: { type: Type.ARRAY, description: "このユーザーに対してコンサルタントが提案できる具体的な次のアクション (3-5個)", items: { type: Type.STRING } },
-        overallSummary: { type: Type.STRING, description: "ユーザーの相談の変遷、成長、現在の状況をまとめたMarkdown形式の総括レポート" },
-        skillMatchingResult: skillMatchingSchemaForIndividualAnalysis,
-        hiddenSkills: {
-            type: Type.ARRAY,
-            description: "クライアントには直接提示されなかったが、コンサルタントが知っておくべき潜在的なスキルや、長期的な視点で伸ばすべきスキルのリスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    skill: { type: Type.STRING, description: "隠れたスキル名" },
-                    reason: { type: Type.STRING, description: "そのスキルがなぜコンサルタントにとって重要かの簡潔な説明。" }
-                },
-                required: ['skill', 'reason']
-            }
-        }
-    },
-    required: ['userId', 'totalConsultations', 'consultations', 'keyThemes', 'detectedStrengths', 'areasForDevelopment', 'suggestedNextSteps', 'overallSummary', 'skillMatchingResult', 'hiddenSkills'],
-};
-
-const skillMatchingSchema = {
-    type: Type.OBJECT,
-    properties: {
-        analysisSummary: { type: Type.STRING, description: "ユーザーの強み、興味、価値観を分析したMarkdown形式のサマリー。" },
-        recommendedRoles: {
-            type: Type.ARRAY,
-            description: "ユーザーの特性にマッチすると思われる職種を3〜5個提案するリスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    role: { type: Type.STRING, description: "推奨される職種名 (例: データアナリスト)" },
-                    reason: { type: Type.STRING, description: "その職種を推奨する理由についての簡潔な説明。" },
-                    matchScore: { type: Type.NUMBER, description: "ユーザーとの適性度を0から100の数値で示すスコア。" }
-                },
-                required: ['role', 'reason', 'matchScore']
-            }
-        },
-        skillsToDevelop: {
-            type: Type.ARRAY,
-            description: "推奨職種に就くために、今後伸ばすと良いスキルや知識のリスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    skill: { type: Type.STRING, description: "学習を推奨するスキル名 (例: Python, SQL)" },
-                    reason: { type: Type.STRING, description: "そのスキルがなぜ重要かの簡潔な説明。" }
-                },
-                required: ['skill', 'reason']
-            }
-        },
-        learningResources: {
-            type: Type.ARRAY,
-            description: "スキル習得に役立つ具体的な学習リソース（オンラインコース、書籍、記事など）のリスト。",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    title: { type: Type.STRING, description: "リソースのタイトル。" },
-                    type: { type: Type.STRING, enum: ['course', 'book', 'article', 'video'], description: "リソースの種類。" },
-                    url: { type: Type.STRING, description: "リソースへのアクセスURL。" }
-                },
-                required: ['title', 'type', 'url']
-            }
-        }
-    },
-    required: ['analysisSummary', 'recommendedRoles', 'skillsToDevelop', 'learningResources']
-};
-
-// --- Main Handler ---
-
-/**
- * The main serverless function handler.
- * It reads the 'action' from the request body and routes to the appropriate handler.
- */
-export default async function handler(request: Request): Promise<Response> {
-  if (request.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), { status: 405, headers: { 'Content-Type': 'application/json' } });
-  }
-
-  try {
-    const { action, payload } = (await request.json()) as ProxyRequestBody;
-
-    switch (action) {
-      case 'chatStream':
-        return await handleChatStream(payload);
-      case 'summarize':
-        return await handleSummarize(payload);
-      case 'revise':
-        return await handleRevise(payload);
-      case 'analyzeConversations':
-        return await handleAnalyzeConversations(payload);
-      case 'analyzeIndividual':
-        return await handleAnalyzeIndividual(payload);
-      case 'summarizeFromText':
-        return await handleSummarizeFromText(payload);
-      case 'skillMatching':
-        return await handleSkillMatching(payload);
-      default:
-        return new Response(JSON.stringify({ error: 'Invalid action' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-    }
-  } catch (error) {
-    console.error(`Error in proxy function:`, error);
-    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-    return new Response(JSON.stringify({ error: 'Internal Server Error', details: errorMessage }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  }
-}
-
-// --- Action Handlers ---
-
 async function handleChatStream(payload: { messages: ChatMessage[], aiType: AIType, aiName: string }): Promise<Response> {
   const { messages, aiType, aiName } = payload;
   const contents = convertMessagesToGeminiHistory(messages);
@@ -346,30 +159,14 @@ async function handleSummarize(payload: { chatHistory: ChatMessage[], aiType: AI
     const summaryPrompt = `
 あなたは、プロのキャリアコンサルタントです。以下の${aiPersona}とユーザーの対話履歴を分析し、クライアントの状況、課題、希望、強みなどを構造化された形式で要約してください。このサマリーは、後続の面談を担当する他のコンサルタントが、短時間でクライアントの全体像を把握できるようにするためのものです。
 
-要約は、以下の項目を網羅し、**各項目では箇条書き（ブレットポイント）を積極的に使用して**、情報を簡潔かつ明瞭にまとめてください。
+要約は、以下の項目を網羅し、Markdown形式で見出しを使って分かりやすく記述してください。
 
----
-
-### 相談の要点 (3点まとめ)
-- 対話全体から最も重要なポイントを3つの箇条書きで簡潔にまとめてください。
-
-### クライアントの現状
-- 職種、業界、現在の役割、経験年数などを箇条書きで記述してください。
-
-### 満足点・やりがい
-- 現状の仕事でポジティブに感じていることを具体的に箇条書きで記述してください。
-
-### 課題・悩み
-- 改善したいと考えていること、ストレスの要因などを具体的に箇条書きで記述してください。
-
-### 将来の希望
-- 今後目指したいキャリアの方向性、興味のある分野などを具体的に箇条書きで記述してください。
-
-### 強み・スキル
-- 対話から読み取れる、クライアントが自己認識している長所や得意なことを箇条書きで記述してください。
-
-### 特記事項
-- その他、コンサルタントが知っておくべき重要な情報があれば記述してください。
+- **クライアントの現状**: 職種、業界、現在の役割など
+- **満足点・やりがい**: 現状の仕事でポジティブに感じていること
+- **課題・悩み**: 改善したいと考えていること、ストレスの要因など
+- **将来の希望**: 今後目指したいキャリアの方向性、興味のある分野
+- **強み・スキル**: 自己認識している長所や得意なこと
+- **特記事項**: その他、コンサルタントが知っておくべき重要な情報
 
 ---
 【対話履歴】
@@ -387,19 +184,7 @@ async function handleRevise(payload: { originalSummary: string, correctionReques
     const { originalSummary, correctionRequest } = payload;
     const revisionPrompt = `
 あなたは、プロのキャリアコンサルタントです。以下は、クライアントとの対話から生成されたサマリーですが、クライアントから修正の依頼がありました。
-依頼内容に基づき、サマリーを丁寧かつ正確に修正してください。
-
-修正後のサマリーも、元のサマリーと同様に以下の構造を維持してください:
-### 相談の要点 (3点まとめ)
-### クライアントの現状
-### 満足点・やりがい
-### 課題・悩み
-### 将来の希望
-### 強み・スキル
-### 特記事項
-
-各項目では、引き続き箇条書きを積極的に使用して、情報を簡潔にまとめてください。
-修正後のサマリーのみをMarkdown形式で出力してください。
+依頼内容に基づき、サマリーを丁寧かつ正確に修正してください。修正後のサマリーのみをMarkdown形式で出力してください。
 
 ---
 【元のサマリー】
@@ -417,204 +202,42 @@ ${correctionRequest}
     return new Response(JSON.stringify({ text: response.text }), { headers: { 'Content-Type': 'application/json' }});
 }
 
-async function handleAnalyzeConversations(payload: { summaries: StoredConversation[] }): Promise<Response> {
+async function handleAnalyze(payload: { summaries: string[] }): Promise<Response> {
     const { summaries } = payload;
-    const summariesText = summaries.map((conv, index) => `--- 相談サマリー ${index + 1} (ID: ${conv.id}) ---\n${conv.summary}`).join('\n\n');
+    const summariesText = summaries.map((summary, index) => `--- 相談サマリー ${index + 1} ---\n${summary}`).join('\n\n');
+
     const analysisPrompt = `
 あなたは、経験豊富なキャリアコンサルティング部門の統括マネージャーです。
 以下に、複数のキャリア相談セッションのサマリーが提供されます。
-これらの情報全体を横断的に分析し、クライアントが直面している共通の傾向、課題、要望について、定量的データと定性的インサイトの両方を含む構造化されたレポートを作成してください。
+これらの情報全体を横断的に分析し、クライアントが直面している共通の傾向、課題、要望について、経営層やコンサルタントチームに報告するためのインサイトを抽出してください。
 
-最終的な出力は、指定されたJSONスキーマに従う必要があります。
+以下の観点で、構造化されたレポートを作成してください。Markdown形式を使用し、具体的で実行可能な提言を含めてください。
 
-### **分析の指示**
+### **1. 相談者の共通の悩み・課題 (Common Challenges)**
+- 最も頻繁に見られる悩みは何か？ (例: ワークライフバランス、キャリアの停滞感、人間関係)
+- その背景にあると考えられる要因は何か？
 
-1.  **定量的分析**:
-    *   **キーメトリクス**: 相談の総数と、最も頻繁に出現する業界トップ3を特定してください。
-    *   **共通の課題**: 全てのサマリーから、相談者が抱える課題を分類・集計し、上位5項目を特定してください。各項目が全体に占める割合をパーセンテージで示してください（合計100%になるように）。
-    *   **キャリアの希望**: 同様に、将来の希望を分類・集計し、上位5項目を特定してパーセンテージで示してください（合計100%）。
-    *   **共通の強み**: 相談者が認識している強みの中から、特に頻出するものを5つ挙げてください。
+### **2. キャリアにおける希望・目標の傾向 (Career Aspirations)**
+- クライアントが目指すキャリアの方向性で共通しているものは何か？ (例: スキルアップ、異業種への転職、管理職への昇進)
+- 求められているスキルや知識は何か？
 
-2.  **定性的分析 (総合インサイト)**:
-    *   上記の定量的データを踏まえ、全体を通して見える重要なインサイトを記述してください。
-    *   我々のコンサルティングサービスが、これらの傾向に対して今後どのように価値を提供できるか、具体的で実行可能な提言をMarkdown形式でまとめてください。レポートの構成は以下の通りです。
-        *   ### 1. 相談者の共通の悩み・課題 (Common Challenges)
-        *   ### 2. キャリアにおける希望・目標の傾向 (Career Aspirations)
-        *   ### 3. 総合的なインサイトと提言 (Overall Insights & Recommendations)
+### **3. 自己認識されている強みの傾向 (Perceived Strengths)**
+- クライアントが自身の強みとして挙げることが多いものは何か？
+- これらの強みを、今後のキャリア開発でどのように活かせそうか？
+
+### **4. 総合的なインサイトと提言 (Overall Insights & Recommendations)**
+- 全体を通して見える、重要なインサイトを記述してください。
+- 我々のコンサルティングサービスが、これらの傾向に対して今後どのように価値を提供できるか、具体的なアクションプランを提言してください。
 
 ---
 【分析対象のサマリー群】
 ${summariesText}
----
-`;
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: analysisPrompt,
-        config: {
-             temperature: 0.3,
-             responseMimeType: "application/json",
-             responseSchema: analysisSchema,
-        }
-    });
-    const jsonText = response.text.trim();
-    return new Response(jsonText, { headers: { 'Content-Type': 'application/json' }});
-}
-
-async function handleAnalyzeIndividual(payload: { conversations: StoredConversation[], userId: string }): Promise<Response> {
-    const { conversations, userId } = payload;
-    const summariesText = conversations
-        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-        .map(conv => `--- 相談日時: ${new Date(conv.date).toLocaleString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ---\n${conv.summary}`)
-        .join('\n\n');
-
-    const analysisPrompt = `
-あなたは、非常に洞察力のあるシニアキャリアコーチであり、キャリアアナリストでもあります。
-以下は、特定のクライアント（ユーザーID: ${userId}）との過去のキャリア相談セッションのサマリー群です。
-これらのサマリーを時系列で注意深く分析し、クライアントの思考や状況の変化、成長の軌跡を読み解いてください。
-最終的なアウトプットとして、**以下の全ての要素を含む、コンサルタント向けの詳細な分析レポート**を、指定されたJSONスキーマに従って生成してください。
-
-### **分析の指示**
-
-#### **パート1: 相談の軌跡分析**
-
-1.  **基本情報の抽出**:
-    *   相談の総数を特定してください。
-    *   個々の相談について、相談日時と、サマリーの内容から推測されるおおよその相談時間（分単位）をリストアップしてください。
-
-2.  **深層分析**:
-    *   **キーテーマの特定**: 複数の相談を通じて、繰り返し現れる中心的なテーマや悩み、関心事を3〜5つ抽出してください。
-    *   **強みの発見**: クライアントが自覚している強みだけでなく、対話の端々から読み取れる潜在的な強みや資質を3〜5つ挙げてください。
-    *   **成長領域の示唆**: クライアントが今後キャリアを築く上で、伸ばすと良いと思われるスキルや視点、経験すべき領域を3〜5つ提案してください。
-    *   **次のステップの提案**: このクライアントの現状と希望を踏まえ、次にコンサルタントとして提案すべき具体的なアクションや問いかけを3〜5つ考えてください。
-
-3.  **総合サマリーの作成**:
-    *   上記の分析をすべて統合し、このクライアントのキャリア相談の旅路を物語るように、Markdown形式で総合的なサマリーを記述してください。初回相談時の状況から現在に至るまでの変化や成長、今後の課題などを明確に含めてください。
-
-#### **パート2: 適性診断・スキルマッチング**
-
-*   クライアントの人物像を分析し、**ユーザーに提示するレベルの「適性診断・スキルマッチングレポート」**を作成してください。
-*   これには、\`analysisSummary\`、\`recommendedRoles\`、\`skillsToDevelop\`、\`learningResources\` の全ての要素を含めてください。
-*   URLは架空のものではなく、実際にアクセス可能な有効なものを記載してください。
-
-#### **パート3: コンサルタント向け追加インサイト (隠れたスキル)**
-
-*   **隠れたスキルの特定**: パート2でクライアントに直接提示したスキル以外に、コンサルタントとして知っておくべき**「隠れたスキル」**を2〜3つ特定してください。
-*   「隠れたスキル」とは、以下のようなものを指します：
-    *   まだ萌芽期だが、将来的に大きな強みになりうる潜在的な能力。
-    *   クライアント自身が気づいていない、または過小評価している資質。
-    *   推奨職種とは直接結びつかないかもしれないが、キャリアの選択肢を広げる可能性のあるスキル。
-*   なぜそれが重要だと考えたのか、コンサルタント向けの理由を簡潔に添えてください。
-
----
-【分析対象: ユーザーID "${userId}" の相談サマリー群】
-${summariesText}
----
-`;
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: analysisPrompt,
-        config: {
-            temperature: 0.4,
-            responseMimeType: "application/json",
-            responseSchema: individualAnalysisSchema,
-        }
-    });
-    const jsonText = response.text.trim();
-    return new Response(jsonText, { headers: { 'Content-Type': 'application/json' }});
-}
-
-async function handleSummarizeFromText(payload: { textToAnalyze: string }): Promise<Response> {
-    const { textToAnalyze } = payload;
-    const summaryPrompt = `
-あなたは、プロのキャリアコンサルタントです。以下のテキストは、ある人物のキャリアに関する自由形式のメモです。この内容を分析し、キャリア相談のサマリーとして構造化されたMarkdownテキストを生成してください。このサマリーは、後続の面談を担当する他のコンサルタントが、短時間でクライアントの全体像を把握できるようにするためのものです。
-
-要約は、以下の項目を網羅し、**各項目では箇条書き（ブレットポイント）を積極的に使用して**、情報を簡潔かつ明瞭にまとめてください。
-
----
-
-### 相談の要点 (3点まとめ)
-- テキスト全体から最も重要なポイントを3つの箇条書きで簡潔にまとめてください。
-
-### クライアントの現状
-- 職種、業界、現在の役割、経験年数などを箇条書きで記述してください。
-
-### 満足点・やりがい
-- 現状の仕事でポジティブに感じていることを具体的に箇条書きで記述してください。
-
-### 課題・悩み
-- 改善したいと考えていること、ストレスの要因などを具体的に箇条書きで記述してください。
-
-### 将来の希望
-- 今後目指したいキャリアの方向性、興味のある分野などを具体的に箇条書きで記述してください。
-
-### 強み・スキル
-- テキストから読み取れる、クライアントが自己認識している長所や得意なことを箇条書きで記述してください。
-
-### 特記事項
-- その他、コンサルタントが知っておくべき重要な情報があれば記述してください。
-
----
-
-もしテキストから情報が読み取れない項目があっても、見出しは必ず含め、「情報なし」などと記述してください。
-出力はMarkdown形式のテキストのみとしてください。
-
----
-【分析対象のテキスト】
-${textToAnalyze}
 ---
 `;
     const response: GenerateContentResponse = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: summaryPrompt,
+        contents: analysisPrompt,
+        config: { temperature: 0.5 }
     });
     return new Response(JSON.stringify({ text: response.text }), { headers: { 'Content-Type': 'application/json' }});
-}
-
-async function handleSkillMatching(payload: { conversations: StoredConversation[] }): Promise<Response> {
-    const { conversations } = payload;
-    const summariesText = conversations
-        .map((conv, index) => `--- 相談サマリー ${index + 1} ---\n${conv.summary}`)
-        .join('\n\n');
-
-    const analysisPrompt = `
-あなたは、キャリア開発と人材育成を専門とするプロのキャリアアナリストです。
-以下に、一人のクライアントとの過去のキャリア相談セッションのサマリーが提供されます。
-これらの情報全体を深く分析し、クライアントの隠れた才能、興味、価値観を読み解いてください。
-
-最終的なアウトプットとして、クライアントの未来の可能性を広げるための、具体的でポジティブな「適性診断・スキルマッチングレポート」を、指定されたJSONスキーマに従って生成してください。
-
-### **分析の指示**
-
-1.  **総合分析サマリー (analysisSummary)**:
-    *   提供されたサマリー全体から、クライアントの強み、弱み、興味の方向性、仕事に対する価値観などを統合し、人物像を要約してください。Markdown形式で記述してください。
-
-2.  **推奨職種 (recommendedRoles)**:
-    *   分析した人物像に基づき、クライアントが活躍できそうな職種を3〜5つ提案してください。
-    *   それぞれの職種について、なぜそれが適しているのかという理由を具体的に記述してください。
-    *   クライアントとの適性度を、0から100の**マッチ度 (matchScore)**として数値で示してください。
-
-3.  **今後伸ばすべきスキル (skillsToDevelop)**:
-    *   推奨した職種に到達するために、あるいは現在のキャリアをさらに発展させるために、学習・強化すると良い具体的なスキルをリストアップしてください。
-    *   なぜそのスキルが重要なのか、理由も添えてください。
-
-4.  **学習リソースの提案 (learningResources)**:
-    *   上記のスキルを学ぶための、具体的なオンラインリソース（コース、記事、ビデオなど）を3〜5つ提案してください。
-    *   リソースの種類（course, book, article, video）とURLを必ず含めてください。URLは架空のものではなく、実際にアクセス可能な有効なものを記載してください。
-
----
-【分析対象のサマリー群】
-${summariesText}
----
-`;
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: analysisPrompt,
-        config: {
-            temperature: 0.5,
-            responseMimeType: "application/json",
-            responseSchema: skillMatchingSchema,
-        }
-    });
-    const jsonText = response.text.trim();
-    return new Response(jsonText, { headers: { 'Content-Type': 'application/json' }});
 }
