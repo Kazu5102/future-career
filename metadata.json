@@ -1,7 +1,0 @@
-{
-  "name": "AIキャリア相談プラットフォーム",
-  "description": "Gemini APIを活用した、あなたのキャリアの悩みに寄り添うAI相談プラットフォーム。",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}
