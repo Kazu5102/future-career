@@ -1,1 +1,0 @@
-// [DEPRECATED] Please use src/config/aiAssistants.ts

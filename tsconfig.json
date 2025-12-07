@@ -19,19 +19,7 @@
   "include": ["src"],
   "exclude": [
     "node_modules",
-    "dist",
-    "api",
-    "components",
-    "config",
-    "data",
-    "services",
-    "views",
-    "App.tsx",
-    "index.tsx",
-    "index-1.tsx",
-    "types.ts",
-    "untitled.tsx",
-    "vite.config.ts"
+    "dist"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

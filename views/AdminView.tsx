@@ -1,1 +1,0 @@
-// [DEPRECATED] Please use src/views/AdminView.tsx
