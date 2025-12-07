@@ -1,0 +1,129 @@
+import { ChatMessage, StoredConversation, AnalysisData, AIType, TrajectoryAnalysisData, HiddenPotentialData, SkillMatchingResult, MessageAuthor } from '../types';
+
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+const sampleAnalysisData: AnalysisData = {
+    keyMetrics: {
+        totalConsultations: 3,
+        commonIndustries: ['IT', 'メーカー', 'サービス'],
+    },
+    commonChallenges: [
+        { label: 'キャリアパスの悩み', value: 40 },
+        { label: '未経験転職の不安', value: 30 },
+        { label: 'ワークライフバランス', value: 20 },
+        { label: 'スキル不足', value: 10 },
+    ],
+    careerAspirations: [
+        { label: 'スキルアップ', value: 50 },
+        { label: 'マネジメント職', value: 25 },
+        { label: '社会貢献', value: 15 },
+        { label: '独立・起業', value: 10 },
+    ],
+    commonStrengths: ['学習意欲', 'コミュニケーション能力', '課題解決能力', '正確性', '協調性'],
+    keyTakeaways: [
+        "多くの相談者がキャリアの不確実性に悩んでいる。",
+        "成長意欲が高く、スキルアップに関心がある。",
+        "自己分析と具体的な情報提供が有効な支援となる。"
+    ],
+    overallInsights: `
+### 1. 相談者の共通の悩み・課題 (Common Challenges)
+- **キャリアの不確実性:** 多くの相談者が、将来のキャリアパスについて漠然とした不安を抱えています。
+### 2. キャリアにおける希望・目標の傾向 (Career Aspirations)
+- **成長意欲の高さ:** 現状維持よりも、新しいスキルを習得し、自身の市場価値を高めたいというポジティブな意欲が伺えます。
+### 3. 総合的なインサイトと提言 (Overall Insights & Recommendations)
+- **自己分析のサポート強化:** 自身の強みや適性を客観的に把握できていないケースが多いため、自己分析を促すアセスメントツールや、キャリアコーチングの機会を提供することが有効です。
+`
+};
+
+const sampleSkillMatchingResult: SkillMatchingResult = {
+    keyTakeaways: [
+        "高い学習意欲と協調性があなたの大きな強みです。",
+        "Web開発分野でのポテンシャルが非常に高いです。",
+        "チーム開発の基本スキルを身につけることが次のステップです。"
+    ],
+    analysisSummary: `
+あなたは、**高い学習意欲**と**着実に物事を進める能力**を兼ね備えています。
+`,
+    recommendedRoles: [
+        { role: 'Webデベロッパー', reason: '学習意欲と正確性を活かし、高品質なプロダクト開発に貢献できます。', matchScore: 85 },
+        { role: 'プロジェクトコーディネーター', reason: 'コミュニケーション能力と計画性を活かし、チームの潤滑油として活躍できます。', matchScore: 78 },
+        { role: 'テクニカルサポート', reason: '課題解決能力と丁寧な対話力で、顧客満足度向上に貢献できます。', matchScore: 72 },
+    ],
+    skillsToDevelop: [
+        { skill: 'Git / GitHub', reason: 'チーム開発の基本ツール。バージョン管理能力は必須です。' },
+        { skill: 'クラウドサービスの基礎知識 (AWS/GCP)', reason: '現代のWebサービス開発に不可欠なインフラ知識です。' },
+    ],
+    learningResources: [
+        { title: 'Gitコース', type: 'course', provider: 'Progate' },
+        { title: 'AWS認定クラウドプラクティショナー講座', type: 'course', provider: 'Udemy' },
+    ],
+};
+
+export const checkServerStatus = async (): Promise<{status: string}> => {
+    await delay(200);
+    console.log("[Mock] Server status check: OK");
+    return { status: 'ok' };
+};
+
+export const getChatResponse = async (messages: ChatMessage[], aiType: AIType, aiName: string): Promise<{ text: string }> => {
+    console.log("[Mock] getChatResponse called with:", { messages, aiType, aiName });
+    await delay(1500);
+    return { text: "これはデモ用の応答です。AIがあなたの発言を分析し、最適な返信を生成しました。実際の環境では、AIからの返答がここに表示されます。" };
+};
+
+export const generateSummary = async (chatHistory: ChatMessage[], aiType: AIType, aiName: string): Promise<string> => {
+    console.log("[Mock] generateSummary called");
+    await delay(2000);
+    return `### デモ用サマリー\n- **状況**: これはモックデータです。\n- **課題**: サーバー機能が使えないプレビュー環境でも動作確認ができるようにしています。`;
+};
+
+export const reviseSummary = async (originalSummary: string, correctionRequest: string): Promise<string> => {
+    console.log("[Mock] reviseSummary called");
+    await delay(1500);
+    return originalSummary + `\n\n### 修正依頼 (デモ)\n- ${correctionRequest}`;
+};
+
+export const analyzeConversations = async (summaries: StoredConversation[]): Promise<AnalysisData> => {
+    console.log("[Mock] analyzeConversations called");
+    await delay(2500);
+    return { ...sampleAnalysisData, keyMetrics: { ...sampleAnalysisData.keyMetrics, totalConsultations: summaries.length } };
+};
+
+export const analyzeTrajectory = async (conversations: StoredConversation[], userId: string): Promise<TrajectoryAnalysisData> => {
+    console.log("[Mock] analyzeTrajectory called for user:", userId);
+    await delay(2500);
+    return {
+        keyTakeaways: ["相談を通じて自己理解が着実に深まっている。", "キャリアパスの不確実性が主要なテーマである。"],
+        userId,
+        totalConsultations: conversations.length,
+        consultations: conversations.map(c => ({ dateTime: new Date(c.date).toLocaleString('ja-JP'), estimatedDurationMinutes: 15 + Math.floor(Math.random() * 15) })),
+        keyThemes: ['キャリアパスの悩み', 'スキルアップ', '自己分析'],
+        detectedStrengths: ['学習意欲', '協調性', '課題発見能力'],
+        areasForDevelopment: ['ポートフォリオ作成', '面接対策'],
+        suggestedNextSteps: ['具体的な職種研究', '情報収集の継続'],
+        overallSummary: `ユーザー **${userId}** のデモ用個別分析レポートです。\n- **相談の軌跡**: 複数回の相談を通じて、自己理解が深まっている様子が伺えます。`
+    };
+};
+
+export const findHiddenPotential = async (conversations: StoredConversation[], userId: string): Promise<HiddenPotentialData> => {
+    console.log("[Mock] findHiddenPotential called for user:", userId);
+    await delay(2000);
+    return {
+        hiddenSkills: [
+            { skill: '潜在的なリーダーシップ', reason: 'チームでの成果を重視する発言から、将来的にリーダーシップを発揮する可能性があります。' },
+            { skill: 'UXデザインへの関心', reason: 'UI改善の成功体験を嬉しそうに語っており、ユーザー視点でのプロダクト開発に関心があるかもしれません。' }
+        ]
+    };
+};
+
+export const generateSummaryFromText = async (textToAnalyze: string): Promise<string> => {
+    console.log("[Mock] generateSummaryFromText called");
+    await delay(2000);
+    return `### インポートされたテキストのデモサマリー\n- **内容**: ${textToAnalyze.substring(0, 100)}...\n- **分析**: テキスト内容をAIが分析し、構造化したサマリーを生成する機能のデモです。`;
+};
+
+export const performSkillMatching = async (conversations: StoredConversation[]): Promise<SkillMatchingResult> => {
+    console.log("[Mock] performSkillMatching called");
+    await delay(3000);
+    return sampleSkillMatchingResult;
+};
